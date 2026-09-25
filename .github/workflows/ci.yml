@@ -43,7 +43,7 @@ jobs:
       - run: mypy --strict scripts
       - run: python scripts/scan_fixtures.py --app-credentials --reviewed-markers docs/p0-marker-review.json data/cache data/input data/public tests/fixtures scripts tests/unit/test_scan_fixtures.py docs/report.html
       # The PoC's core claim: a clean clone rebuilds the published report from the committed
-      # cache, offline and without credentials, byte for byte (README, "Exact byte reproduction").
+      # cache, offline and without credentials, byte for byte.
       - name: Reproduce the published report offline
         env:
           DECLARED_GENERATED_AT: "2026-09-24T01:52:59.468774+00:00"
