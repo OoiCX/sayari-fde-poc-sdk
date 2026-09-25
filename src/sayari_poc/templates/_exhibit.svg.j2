@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 {{ exhibit.height }}" role="img">
+<title>{{ exhibit.node.label }} — {{ exhibit.node.supplier_count }} connected suppliers</title>
+<desc>{% if exhibit.suppliers | length < exhibit.node.supplier_count %}Showing {{ exhibit.suppliers | length }} of {{ exhibit.node.supplier_count }} connected suppliers.{% else %}All {{ exhibit.node.supplier_count }} connected suppliers are shown.{% endif %} Lines show upstream connections found in the evidence reviewed; they do not by themselves prove a direct supply relationship.</desc>
+<text class="diagram-label" x="12" y="20">Screened supplier entities</text>
+{% for supplier in exhibit.suppliers %}
+<path class="edge" d="M {{ supplier.x }} {{ supplier.box_bottom }} V {{ supplier.bus_y }} H 600 V {{ exhibit.node_y }}" />
+{% endfor %}
+{% for bus_y in exhibit.bus_lines %}
+<circle class="edge-junction" cx="600" cy="{{ bus_y }}" r="3" />
+{% endfor %}
+<text class="edge-label" x="620" y="{{ exhibit.edge_label_y }}">upstream connection</text>
+{% for supplier in exhibit.suppliers %}
+<rect class="supplier-box" x="{{ supplier.x - 138 }}" y="{{ supplier.box_y }}" width="276" height="{{ exhibit.box_height }}" rx="10" />
+<text x="{{ supplier.x }}" y="{{ supplier.text_y }}" text-anchor="middle"><title>{{ supplier.label }} — {{ supplier.translated_label or '' }}</title>
+{% for line in supplier.lines %}<tspan x="{{ supplier.x }}" dy="{{ 0 if loop.first else 22 }}">{{ line }}</tspan>{% endfor %}
+</text>
+{% endfor %}
+<rect class="upstream-box" x="200" y="{{ exhibit.node_y }}" width="800" height="{{ 82 + 22 * (exhibit.node_lines | length) }}" rx="10" />
+<text class="diagram-label" x="600" y="{{ exhibit.node_y + 26 }}" text-anchor="middle">Shared upstream entity</text>
+<text class="node-label" x="600" y="{{ exhibit.node_y + 53 }}" text-anchor="middle"><title>{{ exhibit.node.label }} — {{ exhibit.node.translated_label or '' }}</title>
+{% for line in exhibit.node_lines %}<tspan x="600" dy="{{ 0 if loop.first else 22 }}">{{ line }}</tspan>{% endfor %}
+<tspan class="node-count" x="600" dy="28">{{ exhibit.node.supplier_count }} distinct connected suppliers</tspan>
+</text>
+</svg>

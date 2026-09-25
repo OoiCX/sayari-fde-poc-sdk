@@ -1,0 +1,10 @@
+# Preserve frozen evidence and source bytes on every platform.
+data/input/*.xlsx -text
+data/cache/** -text
+docs/report.html -text
+tests/fixtures/*.xlsx -text
+data/public/sayari-risk-factors-*.json -text
+src/sayari_poc/models.py -text
+# Marker reviews also bind these adapted files to exact bytes.
+scripts/scan_fixtures.py -text
+tests/unit/test_scan_fixtures.py -text

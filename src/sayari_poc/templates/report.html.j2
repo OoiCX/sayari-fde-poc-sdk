@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Shared sub-tier supplier screening</title>
+<style>
+{% include '_report.css.j2' %}
+</style>
+<script>
+document.documentElement.classList.add('js');
+document.addEventListener('DOMContentLoaded', () => {
+  const pageSize = 10;
+  const groups = [...document.querySelectorAll('[data-entity-group]')];
+  const disclosures = [...document.querySelectorAll('[data-disclosure]')];
+  const normalize = value => value.normalize('NFKC').toLocaleLowerCase();
+  const setupList = (prefix, selector, inputId, clearId, countId, emptyId, noun, grouped) => {
+    const rows = [...document.querySelectorAll(selector)];
+    // Search all rendered evidence, including collapsed details and other pages.
+    const searchable = rows.map(element => [element, normalize(element.textContent)]);
+    const input = document.getElementById(inputId);
+    const pager = document.getElementById(`${prefix}-pagination`);
+    const previous = document.getElementById(`${prefix}-previous`);
+    const next = document.getElementById(`${prefix}-next`);
+    let page = 0;
+    const update = (moveFocus = false) => {
+      const term = normalize(input.value).trim();
+      const matching = searchable.filter(([, content]) => content.includes(term)).map(([row]) => row);
+      const pages = Math.ceil(matching.length / pageSize);
+      page = Math.max(0, Math.min(page, pages - 1));
+      const start = page * pageSize;
+      const visible = matching.slice(start, start + pageSize);
+      rows.forEach(row => { row.hidden = !visible.includes(row); });
+      // Filtering acts on this list alone. The diagrams live in their own section and are
+      // not evidence a reader can search, so hiding one from here would silently edit a
+      // different section of the report.
+      if (grouped) {
+        groups.forEach(group => {
+          group.hidden = ![...group.querySelectorAll('[data-filter-row]')].some(row => !row.hidden);
+        });
+      }
+      document.getElementById(countId).textContent = `${matching.length} of ${rows.length} ${noun} match`;
+      document.getElementById(emptyId).hidden = !term || matching.length !== 0;
+      const range = matching.length ? `${start + 1}–${start + visible.length}` : '0';
+      document.getElementById(`${prefix}-page-status`).textContent = `Showing ${range} of ${matching.length} ${noun}`;
+      document.getElementById(`${prefix}-page-number`).textContent = `Page ${pages ? page + 1 : 0} of ${pages}`;
+      previous.disabled = page === 0;
+      next.disabled = page + 1 >= pages;
+      if (moveFocus && visible.length) {
+        const summary = visible[0].querySelector('summary');
+        summary.focus();
+        summary.scrollIntoView({block: 'nearest'});
+      }
+    };
+    input.addEventListener('input', () => { page = 0; update(); });
+    document.getElementById(clearId).addEventListener('click', () => {
+      input.value = ''; page = 0; update(); input.focus();
+    });
+    previous.addEventListener('click', () => { if (!previous.disabled) { page -= 1; update(true); } });
+    next.addEventListener('click', () => { if (!next.disabled) { page += 1; update(true); } });
+    update();
+    pager.hidden = false;
+    return rows;
+  };
+  disclosures.forEach(element => element.removeAttribute('open'));
+  const rows = setupList('entity', '[data-filter-row]', 'report-filter', 'clear-filter',
+    'filter-count', 'no-match', 'shared entity rows', true);
+  const suppliers = setupList('supplier', '[data-supplier-row]', 'supplier-filter',
+    'clear-supplier-filter', 'supplier-filter-count', 'supplier-no-match', 'supplier entries', false);
+  // Print all evidence, then restore the reader's exact page, filter and disclosure state.
+  let printState;
+  window.addEventListener('beforeprint', () => {
+    if (printState) return;
+    printState = {
+      visibility: [...rows, ...suppliers, ...groups].map(element => [element, element.hidden]),
+      disclosures: disclosures.map(element => [element, element.open])
+    };
+    printState.visibility.forEach(([element]) => { element.hidden = false; });
+    disclosures.forEach(element => { element.open = true; });
+  });
+  window.addEventListener('afterprint', () => {
+    if (!printState) return;
+    printState.visibility.forEach(([element, hidden]) => { element.hidden = hidden; });
+    printState.disclosures.forEach(([element, open]) => { element.open = open; });
+    printState = undefined;
+  });
+  document.documentElement.classList.add('js-ready');
+});
+</script>
+</head>
+<body><main>
+{% macro pagination(prefix, label, target) -%}
+<nav id="{{ prefix }}-pagination" class="pagination" aria-label="{{ label }}" hidden>
+<p id="{{ prefix }}-page-status" role="status" aria-live="polite" aria-atomic="true"></p>
+<div class="pagination-actions">
+<button id="{{ prefix }}-previous" type="button" aria-controls="{{ target }}">Previous</button>
+<span id="{{ prefix }}-page-number"></span>
+<button id="{{ prefix }}-next" type="button" aria-controls="{{ target }}">Next</button>
+</div>
+</nav>
+{%- endmacro %}
+{% macro factor_list(items, profile=false, collapsible=false) -%}
+{# Keep factor order and exact evidence; show readable meanings before optional source fields.
+   When collapsible, the name, badges and level stay visible and only the explanation folds
+   away, so nothing a reader needs to triage is hidden behind a click. #}
+<ul class="factor-list{{ ' factor-list-collapsible' if collapsible }}">{% for item in items %}{% set slug = item.factor if profile else item %}{% set published = glossary.get(slug) %}
+<li>{% if collapsible %}<details class="factor-detail" data-disclosure open><summary>{% endif %}<span class="factor-label">{{ published.label if published else slug }}</span><small class="factor-badges">{% for badge in slug | factor_badges(item.level if profile else none) %}<span class="factor-badge">{{ badge }}</span>{% endfor %}</small>{% if collapsible %}</summary>{% endif %}
+{% if profile %}{% set value_sentence = slug | factor_value(item.value) %}{% if value_sentence %}<p class="factor-value">{{ value_sentence }}</p>{% endif %}{% endif %}
+<small class="factor-description">{{ published.description if published and published.description | trim else 'No published definition in the committed ontology snapshot.' }}</small>
+{% if profile and published and item.level and item.level != published.level %}<small class="level-disagreement">Sayari&rsquo;s published level for this factor is {{ published.level }}; the level shown on the badge is the one returned on this supplier&rsquo;s profile.</small>{% endif %}{% if collapsible %}</details>{% endif %}</li>
+{% endfor %}</ul>
+{%- endmacro %}
+{% macro factors(items, profile=false, additional=none, collapsible=false) -%}
+{% set scopes = namespace(identity=false, path=false, unspecified=false) %}
+{% for item in items + (additional if additional is not none else []) %}{% set slug = item.factor if profile else item %}{% set scope = slug | factor_psa_scope %}{% if scope == 'identity' %}{% set scopes.identity = true %}{% elif scope == 'path' %}{% set scopes.path = true %}{% elif scope == 'unspecified' %}{% set scopes.unspecified = true %}{% endif %}{% endfor %}
+<div class="factor-section">
+{% if additional is not none %}<p><strong>Critical and high factors ({{ items | length }})</strong></p>{% endif %}
+{% if scopes.identity %}<p class="factor-note">Possible-identity factors do not confirm this entity carries the matched entity's risk.</p>{% endif %}
+{% if scopes.path %}<p class="factor-note">Some of these factors may rest on a company match Sayari has not confirmed. Treat them as signals to review alongside the evidence, not as confirmed findings.</p>{% endif %}
+{% if scopes.unspecified %}<p class="factor-note">Possible identity involvement is unconfirmed; the available definition does not establish where it occurs.</p>{% endif %}
+{{ factor_list(items, profile, collapsible) }}
+{% if additional %}<div class="factor-additional">
+<p><strong>Additional reported factors (<span class="factor-count">{{ additional | length }}</span>)</strong></p>
+{{ factor_list(additional, profile) }}
+</div>{% endif %}
+</div>
+{%- endmacro %}
+<header id="report-header" class="report-header" role="region" aria-labelledby="report-header-title">
+<p class="eyebrow">Supply chain due diligence</p>
+<h1>Shared sub-tier supplier screening</h1>
+<h2 id="report-header-title">Report scope</h2>
+<p><strong>{{ headline | supplier_list_label(headline) }}</strong>. Shared upstream entities are observed within retrieved evidence.</p>
+<p class="report-meta">Report content generated: {{ generated_at | report_datetime }}</p>
+<div class="reading-guide">
+<h2>Terms and definitions</h2>
+<ul>
+<li><strong>Entity:</strong> a person or organisation represented by a Sayari record.</li>
+<li><strong>Match strength:</strong> Sayari's assessment of how well an input matches a record; weak matches are not accepted identities.</li>
+<li><strong>Upstream:</strong> entities found earlier in a supplier's trade network within the search limits.</li>
+<li><strong>Tier:</strong> Sayari's annotation of an entity's position along a retrieved trade path. The screened supplier is Tier 1, so the first step shown on a supply chain path is Tier 2, and the configured search depth limits how far upstream the tiers reach. This report does not recalculate it.</li>
+<li><strong>Risk factor:</strong> a named signal reported by Sayari for an entity or its connections, not a complete risk assessment.</li>
+<li><strong>Seed risk:</strong> Sayari describes &ldquo;direct associations between entities and authoritative risk sources&rdquo;. Some are country indicators rather than allegations about the entity itself.</li>
+<li><strong>Network risk:</strong> Sayari describes &ldquo;risk exposure through business relationships, ownership structures, and trading activity&rdquo;.</li>
+<li><strong>PSA risk (Possibly-Same-As):</strong> Sayari describes “potential risk through entity similarities that suggest a relationship but lack definitive proof”; a PSA factor concerns another entity in the same possible-identity group, not confirmed risk on this entity.</li>
+<li><strong>Level:</strong> Sayari's severity label on a reported factor; the report's selection rules are separate.</li>
+<li><strong>Shared sub-tier supplier:</strong> an entity found upstream of more than one screened supplier; the connection is trade-record evidence, not proof of direct supply.</li>
+<li><strong>HS code:</strong> a Harmonized System product classification code attached to a trade record.</li>
+</ul>
+<p>Factor names and definitions come from Sayari&rsquo;s published ontology snapshot. Where a factor is not in that snapshot, the report shows Sayari&rsquo;s original identifier for it instead of a name. Those identifiers also appear in the data export, so every factor can be traced back to Sayari.</p>
+<p class="technical-note">Terminology source: Sayari documentation, API guides, Risk factors — documentation.sayari.com/api/guides/risk-factors.</p>
+</div>
+</header>
+<section id="executive-summary" aria-labelledby="executive-summary-title">
+<h2 id="executive-summary-title">Executive summary</h2>
+<p class="section-note">Three different things are counted here: rows on the supplier list, the identities they were matched to, and the upstream entities those identities share.</p>
+<dl class="kpis">
+<div class="kpi"><dt>Suppliers screened</dt><dd><span class="kpi-value">{{ executive.suppliers_screened }}</span><span class="kpi-detail">supplier input rows</span></dd></div>
+<div class="kpi"><dt>Suppliers resolved</dt><dd><span class="kpi-value">{{ executive.resolved_rows }}</span><span class="kpi-detail">resolved input rows</span><span class="kpi-context">{{ executive.resolved_entities }} distinct entities · {{ executive.unresolved_rows }} unresolved rows</span></dd></div>
+<div class="kpi"><dt>Shared entities for review</dt><dd><span class="kpi-value">{{ executive.qualifying_nodes }}</span><span class="kpi-detail">distinct sub-tier entities</span><span class="kpi-context">Includes possible identity matches</span></dd></div>
+<div class="kpi"><dt>With upstream evidence</dt><dd><span class="kpi-value">{{ executive.coverage_with_evidence }} / {{ executive.coverage_denominator }}</span><span class="kpi-detail">supplier input rows</span><span class="kpi-context">{{ executive.coverage_assessed }} assessed · {{ executive.coverage_partial }} partial</span></dd></div>
+</dl>
+<p class="kpi-explainer">Shared entities for review appear upstream of more than one supplier and meet the stated risk factor rules. Possible identity matches are unconfirmed.</p>
+</section>
+<section id="coverage" aria-labelledby="coverage-title">
+<h2 id="coverage-title">Coverage and data completeness</h2>
+<p class="section-note">This section shows how much supplier data was successfully matched and analyzed. Records that could not be matched, and separate records that map to the same legal entity, both make the number of uploaded supplier records differ from the number of unique entities analyzed.</p>
+{% for portfolio, counts in coverage.items() %}<h3>{{ portfolio | supplier_list_label(headline) }}</h3><ul class="coverage-states">{% for status, label in coverage_labels.items() %}<li class="status" data-status="{{ status }}"><span class="coverage-name">{{ label }}</span> <strong>{{ counts[status] }}</strong><span class="coverage-detail">{{ coverage_details[status] }}</span></li>{% endfor %}</ul>{% else %}<p>No supplier coverage rows in this scope.</p>{% endfor %}
+<p>Some suppliers could not be fully analyzed because they could not be matched to a company record, or because Sayari flagged the upstream search as partial. These cases are shown separately so that missing information is not interpreted as an absence of risk. Suppliers with uncertain matches or incomplete evidence may require additional review. Where a company profile was unavailable, that supplier&rsquo;s risk factors are unknown rather than absent.</p>
+<h3>Suppliers requiring additional review</h3>
+{% if exceptions %}<p>Each supplier below is missing something the analysis needed. None of these is a result of &ldquo;no findings&rdquo;: the check did not run or did not complete. Confirming a match needs enough identifying detail to tell one company from another, and a registered legal name or company identifier is usually what settles it.</p>
+<ul>{% for exception in exceptions %}<li><strong>{{ exception.input_name or 'Company name unavailable' }}</strong> &mdash; {{ exception | exception_note }}</li>{% endfor %}</ul>{% else %}<p>No suppliers require additional review in this scope.</p>{% endif %}
+</section>
+<section id="convergence" aria-labelledby="convergence-title">
+<h2 id="convergence-title">How shared upstream entities were selected</h2>
+<p class="section-note">Each step narrows the upstream entities found for the screened suppliers down to the entities listed under Shared upstream entities flagged for review. Counts are lower bounds within retrieved evidence, and an entity removed by a step is not an entity found to be free of risk. Methodology and limitations explains the country limit used to select entities.</p>
+{% for portfolio in convergence_portfolios %}
+{% set result = convergence[portfolio] %}
+<h3>{{ portfolio | supplier_list_label(headline) }} — selection steps</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Selection step</th><th scope="col">Count</th><th scope="col">What this means</th></tr></thead><tbody>
+{% for key, count in result.funnel.items() %}<tr><td>{{ funnel_labels.get(key, key) }}</td><td>{{ count }}</td><td>{{ funnel_details.get(key, '') }}</td></tr>{% endfor %}
+</tbody></table></div>{% endfor %}
+</section>
+{# Bound the worklist to a readable sample; the count shown is derived from this limit,
+   and findings.json keeps every screened row. #}
+{% set worklist_limit = 10 %}
+{% set worklist = convergence.get(headline, {}).get('suppliers_ranked', []) if headline else [] %}
+<section id="supplier-worklist" aria-labelledby="supplier-worklist-title">
+<h2 id="supplier-worklist-title">Top {{ worklist[:worklist_limit] | length }} Suppliers by Shared Entities Flagged</h2>
+{% if worklist %}
+<p class="section-note">Showing the {{ worklist[:worklist_limit] | length }} most connected of {{ worklist | length }} screened suppliers. This table highlights screened suppliers with the greatest number of risk-related connections identified in the available upstream evidence. Higher counts may indicate a greater need for review, but should be considered together with evidence coverage and the underlying findings. Incomplete evidence may understate the full upstream picture. Flagged counts represent related entities identified in the supplier&rsquo;s upstream network. They do not necessarily represent findings directly associated with the supplier itself. Suppliers are prioritized for review based on critical and high factors. Elevated factors are shown as additional context to support further assessment. All counts are minimums based on the evidence retrieved.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Supplier</th><th scope="col">Evidence</th><th scope="col">Upstream retrieved</th><th scope="col">Shared entities flagged</th><th scope="col">Critical or high factors</th><th scope="col">Elevated factors</th></tr></thead><tbody>
+{% for row in worklist[:worklist_limit] %}<tr><td>{{ row.label }}</td><td><span class="status" data-status="{{ row.coverage }}">{{ coverage_labels.get(row.coverage, row.coverage | replace('_', ' ')) }}</span></td><td>{{ row.upstream if row.upstream is not none else 'Unavailable' }}</td><td>{% if row.flagged is not none %}<span class="bar" aria-hidden="true"><span class="bar-fill" style="width: {{ row.flagged_share }}%"></span></span> {{ row.flagged }}{% else %}Unavailable{% endif %}</td><td>{{ row.severe_factors if row.severe_factors is not none else 'Unavailable' }}{% if row.critical_factors %} <span class="note-flag">includes {{ row.critical_factors }} critical</span>{% endif %}</td><td>{{ row.elevated_factors if row.elevated_factors is not none else 'Unavailable' }}</td></tr>{% endfor %}
+</tbody></table></div>
+<p>Factor counts use Sayari&rsquo;s published severity levels for factors on each supplier&rsquo;s own retrieved profile. Critical factors are identified separately within the combined total. Unavailable means the evidence was not retrieved successfully; a zero count should not be interpreted as an absence of risk.</p>
+{% else %}<p>No screened supplier rows in this scope.</p>{% endif %}
+</section>
+<section id="key-finding" class="callout" aria-labelledby="key-finding-title">
+<h2 id="key-finding-title">Most widely shared upstream entity flagged for review</h2>
+<p class="section-note">This section highlights the upstream entity that appears most frequently across the screened suppliers reviewed in this report, based on the evidence retrieved.</p>
+{% if key_finding %}
+<h3 class="callout-heading">{{ key_finding.node.label or 'Name unavailable' }}</h3>
+{% if key_finding.node.translated_label %}<p class="evidence">{{ key_finding.node.translated_label }}</p>{% endif %}
+<p class="callout-count">{{ key_finding.node.supplier_count }} distinct connected suppliers</p>
+<p class="evidence">Countries: {{ key_finding.node.countries | join(', ') }} ({{ key_finding.node.country_count }}).</p>
+<h3 class="factor-heading">Risk factors identified</h3>
+{{ factors(key_finding.node.severe_factors, collapsible=true) }}
+<p class="section-note">The diagram shows suppliers connected to this upstream entity within the evidence reviewed. These connections indicate upstream relationships identified during the analysis, but they do not by themselves prove a direct supply relationship. Counts are minimum observed connections based on the available evidence.</p>
+{% if key_finding.exhibit %}{% with exhibit = key_finding.exhibit %}
+<figure>
+<div class="svg-wrap">{% include '_exhibit.svg.j2' %}</div>
+<ul class="exhibit-list">{% for supplier in exhibit.suppliers %}<li>{{ supplier.label }}{% if supplier.translated_label %} <small>{{ supplier.translated_label }}</small>{% endif %}</li>{% endfor %}</ul>
+<figcaption>Top-ranked shared entity — {% if exhibit.suppliers | length < exhibit.node.supplier_count %}{{ exhibit.suppliers | length }} of {{ exhibit.node.supplier_count }} distinct connected suppliers shown{% else %}{{ exhibit.node.supplier_count }} distinct connected suppliers shown{% endif %}.
+Lines indicate upstream connections identified within the scope of this analysis and do not by themselves prove direct supply relationships. Connections are based on the evidence available for this run.</figcaption>
+</figure>
+{% endwith %}{% endif %}
+{% else %}
+<p class="callout-empty">No shared upstream entity meets the country and risk factor rules within retrieved evidence. See How shared upstream entities were selected for the selection steps and Coverage and data completeness for the coverage states. This does not establish absence of risk.</p>
+{% endif %}
+</section>
+<section id="suppliers" aria-labelledby="suppliers-title">
+<h2 id="suppliers-title">Supplier evidence</h2>
+<p class="section-note">One entry per supplier input row, ordered by the number of shared entities flagged for review. Counts are lower bounds within retrieved evidence.</p>
+{% macro route_evidence(route, supplier) -%}
+<div class="path-route">
+<p>Observed supply chain path — Sayari tier annotations.</p>
+<div class="path-sequence">
+<div class="path-source"><strong>Tier 1 — {{ supplier.label or supplier.input_name }} (Screened Supplier)</strong>{% if supplier.translated_label and supplier.translated_label != supplier.label %}<small>{{ supplier.translated_label }}</small>{% endif %}</div>
+<ol class="path-hops">{% for hop in route.hops %}
+<li><div class="path-hop"><span aria-hidden="true">→ </span><strong>Tier {{ hop.tier }} — {{ hop.label or 'Name unavailable' }}</strong>{% if hop.translated_label and hop.translated_label != hop.label %}<small>{{ hop.translated_label }}</small>{% endif %}
+<ul>{% for component in hop.components %}<li>HS code: {{ component.hs_code if component.hs_code is not none else 'none returned' }}<small>Departure countries: {{ component.departure_countries | join(', ') if component.departure_countries else 'none returned' }} → Arrival countries: {{ component.arrival_countries | join(', ') if component.arrival_countries else 'none returned' }}</small><small>Shipment observation window: {{ component.min_date if component.min_date is not none else 'none returned' }} – {{ component.max_date if component.max_date is not none else 'none returned' }}</small></li>{% endfor %}</ul>
+</div></li>{% endfor %}</ol>
+</div>
+{% if route.occurrences > 1 %}<p>Sayari returned {{ route.occurrences }} paths that reach this entity by this route.</p>{% endif %}
+{% if route.truncated %}<p>Sayari&rsquo;s path continues further upstream beyond this entity; the steps past it are not shown here.</p>{% endif %}
+</div>
+{%- endmacro %}
+<div class="filter">
+<label for="supplier-filter"><strong>Filter supplier entries</strong></label><br>
+<input id="supplier-filter" type="search" placeholder="Company name, country or evidence" aria-describedby="supplier-filter-count">
+<button id="clear-supplier-filter" type="button">Clear supplier filter</button>
+<p id="supplier-filter-count" role="status" aria-live="polite"></p>
+<div id="supplier-no-match" class="notice" hidden>
+<p>No supplier entry in this report matched that text. This report contains only the supplier input rows screened in this run — screening a new entity requires a new screening run.</p>
+<p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
+</div>
+</div>
+<div id="supplier-list" class="supplier-list">
+{% for row in supplier_rows %}
+{% set supplier = row.supplier %}
+<details id="{{ row.dom_id }}" data-supplier-row data-disclosure open>
+<summary><span class="supplier-summary">
+<span class="supplier-identity"><strong>{{ supplier.input_name }}</strong><small>Resolution: {{ supplier.resolution_status | replace('_', ' ') }} · Coverage: {{ coverage_labels.get(supplier.coverage_status or 'not_attempted') }}</small></span>
+<span class="supplier-exposure">{% if row.exposure_state == 'exposed' %}Connected upstream to <strong>{{ row.exposure_count }}</strong> of {{ row.exposure_denominator }} shared entities flagged for review<small>{{ row.path_stored_count }} supply chain path records shown</small>{% elif row.exposure_state == 'none_observed' %}No observed upstream connection to any of the {{ row.exposure_denominator }} shared entities flagged for review, within retrieved upstream evidence{% else %}{{ row.exposure_note }}{% endif %}</span>
+</span></summary>
+<div class="disclosure-body">
+<div class="supplier-evidence">
+<h3>Identity and resolution</h3>
+<p><small>{{ supplier.input_address or 'Address unavailable' }} — {{ supplier.input_country or 'Country unavailable' }}</small></p>
+<p>{{ supplier.label or 'Unavailable' }}{% if supplier.translated_label %}<small>{{ supplier.translated_label }}</small>{% endif %}
+{% if supplier.resolution_status in ['resolved', 'weak', 'no_match'] %}<small>Sayari returned {% if supplier.candidate_count >= resolution_page_max %}at least {% endif %}{{ supplier.candidate_count }} possible {{ 'record' if supplier.candidate_count == 1 else 'records' }} for this name{% if supplier.resolution_status == 'resolved' %}; the closest was used{% endif %}.</small>{% else %}<small>Returned-candidate count unavailable; resolution did not complete successfully.</small>{% endif %}
+{% if supplier.match_strength is not none %}<small>Match strength: {{ supplier.match_strength }} — Sayari&rsquo;s own rating of the match.</small>{% endif %}
+{% if supplier.score is not none %}<small data-relevance-score>Relevance score: {{ supplier.score }}</small>
+<small>A ranking value, not a probability. Sayari&rsquo;s default pass mark is 77.</small>{% endif %}
+{% if supplier.resolution_status == 'weak' %}<small>Needs identity review; profile not requested.</small>{% endif %}
+{% if supplier.error %}<small>{{ supplier.error }} ({{ supplier.error_type | replace('_', ' ') }})</small>{% endif %}
+{% for index, error in supplier.candidate_errors.items() %}<small>Candidate at response index {{ index }}: {{ error }}</small>{% endfor %}
+</p>
+{% if supplier.resolution_status != 'resolved' %}
+<div class="adjudication">
+<h4>Unadjudicated resolution candidates</h4>
+{% if row.candidate_rows %}
+<p>Returned in Sayari response order, without local re-ranking. No candidate below is accepted as the canonical identity. The first response candidate remains authoritative for the resolution outcome. Score is a relevance score, not a calibrated confidence or probability.</p>
+<div class="table-wrap"><table class="candidate-table">
+<caption>Returned candidates for identity review; response indices start at zero.</caption>
+<thead><tr><th scope="col">Response index</th><th scope="col">Candidate label</th><th scope="col">Match strength</th><th scope="col">Relevance score</th><th scope="col">Countries</th></tr></thead>
+<tbody>{% for item in row.candidate_rows %}{% set candidate = item.candidate %}<tr><td>{{ item.response_index }}</td><td>{{ candidate.label }}{% if candidate.translated_label and candidate.translated_label != candidate.label %}<small>{{ candidate.translated_label }}</small>{% endif %}</td><td>{{ candidate.match_strength.value }}</td><td>{{ candidate.score if candidate.score is not none else 'Unavailable' }}</td><td>{% if candidate.get('countries') is none %}Not retained in findings{% else %}{{ candidate.countries | join(', ') if candidate.countries else 'None returned' }}{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% elif supplier.resolution_status == 'no_match' and supplier.candidate_count == 0 %}
+<p>No candidates returned by the successful resolution request. No identity accepted; this is not evidence of absence of risk.</p>
+{% elif supplier.resolution_status == 'error' %}
+<p>Resolution failed; no validated candidate evidence is available for adjudication. This is not a successful no-match result.</p>
+{% else %}
+<p>No validated candidate evidence retained for adjudication. An empty table would not establish a successful no-match result.</p>
+{% endif %}
+{% if supplier.candidate_errors %}<p>Malformed candidates are omitted from the table; their original response indices and errors are recorded above.</p>{% endif %}
+</div>
+{% endif %}
+</div>
+<div class="supplier-evidence">
+<h3>Retrieval coverage</h3>
+<p><span class="status" data-status="{{ supplier.coverage_status or 'not_attempted' }}">{{ coverage_labels.get(supplier.coverage_status or 'not_attempted') }}</span>
+{% if supplier.upstream_entity_count is not none %}<small>{{ supplier.upstream_entity_count }} upstream entities were found for this supplier. {{ 'Sayari flagged this search as partial.' if supplier.upstream_partial_results else 'Sayari did not flag this search as partial.' }}</small>{% endif %}
+{% if supplier.upstream_error_type %}<small>Upstream error: {{ supplier.upstream_error_type | replace('_', ' ') }}</small>{% endif %}
+</p>
+</div>
+<div class="supplier-evidence">
+<h3>Shared upstream connections</h3>
+{% if row.exposure_state == 'exposed' %}
+<p class="connection-summary">Within the search limits, retrieved evidence links this supplier to {{ row.exposure_count }} of the {{ row.exposure_denominator }} shared upstream entities flagged for review.
+{% if row.path_nodes_without_evidence == 0 %}Path evidence is available for {% if row.exposure_count == 1 %}this connection{% else %}all {{ row.path_nodes_with_evidence }} connections{% endif %}.
+{% elif row.path_nodes_with_evidence == 0 %}No path evidence was retrieved for {% if row.exposure_count == 1 %}this connection{% else %}these {{ row.path_nodes_without_evidence }} connections{% endif %}.
+{% else %}Path evidence is available for {{ row.path_nodes_with_evidence }} {{ 'connection' if row.path_nodes_with_evidence == 1 else 'connections' }}; {{ row.path_nodes_without_evidence }} {{ 'has' if row.path_nodes_without_evidence == 1 else 'have' }} no retrieved path evidence.
+{% endif %}</p>
+<ol class="exposure-nodes">{% for exposed in row.exposure_nodes %}
+<li>
+<h4>{{ exposed.node.label or 'Name unavailable' }} — {{ exposed.node.supplier_count }} connected suppliers</h4>
+{% if exposed.node.translated_label and exposed.node.translated_label != exposed.node.label %}<p>{{ exposed.node.translated_label }}</p>{% endif %}
+{% if exposed.paths_available %}
+{# Two sentences on every block, in the same order. Both counts are node-level: the report
+   keeps a bounded sample per entity, divided across the connected suppliers, so the paths
+   rendered below are only this supplier's share. Say 'keeps', never 'shows'. #}
+{% set observed = exposed.node.supplier_count - exposed.suppliers_without_path_evidence %}
+<p>{% if exposed.retrieved_path_count == 0 %}Sayari returned no supply chain paths to this entity within the search limits.{% else %}Sayari returned {{ exposed.retrieved_path_count }} supply chain {{ 'path' if exposed.retrieved_path_count == 1 else 'paths' }} to this entity across all {{ exposed.node.supplier_count }} connected suppliers{% if exposed.stored_path_count == exposed.retrieved_path_count %}, and this report keeps {{ 'it' if exposed.retrieved_path_count == 1 else 'all of them' }}.{% else %}; this report keeps {{ exposed.stored_path_count }} of them as {{ 'an example' if exposed.stored_path_count == 1 else 'examples' }}.{% endif %}{% endif %} {% if observed == exposed.node.supplier_count %}All {{ exposed.node.supplier_count }} suppliers have at least one path.{% elif observed == 0 %}None of the {{ exposed.node.supplier_count }} suppliers has a path on record.{% else %}{{ observed }} of the {{ exposed.node.supplier_count }} suppliers {{ 'has' if observed == 1 else 'have' }} at least one path{% if exposed.path_observed %}, including this one.{% else %}; this supplier is not one of them.{% endif %}{% endif %}</p>
+<details data-disclosure open>
+<summary>Supply chain paths for this supplier</summary>
+<div class="disclosure-body">
+{% if not exposed.path_observed %}<p>No supply chain path to this entity was retrieved for this supplier within the search limits. That does not mean no path exists.</p>
+{% elif not exposed.routes %}<p>This supplier&rsquo;s supply chain paths to this entity are not among the examples kept, which are shared across all {{ exposed.node.supplier_count }} connected suppliers. This is a display limit, not an absence of evidence.</p>{% endif %}
+{% for route in exposed.routes %}{{ route_evidence(route, supplier) }}{% endfor %}
+</div>
+</details>
+{% endif %}
+</li>{% endfor %}</ol>
+{% elif row.exposure_state == 'none_observed' %}<p>No observed upstream connection to any of the {{ row.exposure_denominator }} shared entities flagged for review, within retrieved upstream evidence</p>
+{% else %}<p>{{ row.exposure_note }}</p>{% endif %}
+</div>
+<div class="supplier-evidence">
+<h3>Risk factors reported for this supplier</h3>
+<p>Every risk factor Sayari reported for this supplier, at all severity levels. Factors Sayari reported as not present are left out. A level describes one factor; it is not an overall rating for the supplier.</p>
+<div>{% if supplier.profile %}
+{{ supplier.profile.label or 'Profile name unavailable' }}{% if supplier.profile.translated_label %}<small>{{ supplier.profile.translated_label }}</small>{% endif %}
+<small>Countries: {{ supplier.profile.countries | join(', ') if supplier.profile.countries else 'none returned' }}</small>
+<p>Most severe level Sayari reported on any single factor: {{ supplier.profile.max_level or 'none assigned' }}.</p>
+<small class="source-meta">{% if supplier.profile_status == 'available' %}Company profile retrieved from Sayari.{% elif supplier.profile_status == 'error' %}The company profile could not be retrieved, so this supplier&rsquo;s risk factors are unknown rather than absent.{% else %}No company profile was requested for this supplier.{% endif %}</small>
+{% if supplier.profile.risk_factors %}{{ factors(supplier.profile.risk_factors, profile=true) }}
+{% else %}<small>No applicable factors returned; this is not a complete risk assessment.</small>{% endif %}
+{% else %}{% if supplier.profile_status == 'error' %}The company profile could not be retrieved, so this supplier&rsquo;s risk factors are unknown rather than absent.{% else %}No company profile was requested for this supplier.{% endif %}{% endif %}
+{% if supplier.profile_error %}<small>{{ supplier.profile_error }} ({{ supplier.profile_error_type | replace('_', ' ') }})</small>{% endif %}
+</div>
+<div class="identity-summary">
+<h4>Other records that may be the same company</h4>
+{% if supplier.psa_status == 'not_resolved' %}<p>Not checked — this supplier was not matched to a Sayari record.</p>
+{% elif supplier.psa_status != 'available' %}<p>Not available — this supplier&rsquo;s company profile could not be retrieved.</p>
+{% else %}<p>{% if supplier.psa_count is not none %}Sayari holds {{ supplier.psa_count }} other {{ 'record' if supplier.psa_count == 1 else 'records' }} that may describe this same company. Sayari has not confirmed they are the same.{% else %}Sayari did not report how many other records may describe this same company.{% endif %}</p>
+{% if supplier.psa_risky is sameas true %}<p>At least one factor above comes from one of those unconfirmed records rather than this supplier&rsquo;s own record, so it may not belong to this supplier.</p>
+{% elif supplier.psa_risky is sameas false %}<p>No factor above comes from one of those unconfirmed records. That does not mean this supplier is free of risk.</p>
+{% else %}<p>Sayari did not classify every factor, so whether any came from an unconfirmed record is unknown. That is not evidence of no risk.</p>{% endif %}
+{% endif %}
+</div>
+
+</div>
+</div>
+</details>
+{% else %}<p>No named input rows in the selected scope.</p>{% endfor %}
+</div>
+{{ pagination('supplier', 'Supplier evidence pages', 'supplier-list') }}
+</section>
+<section id="flagged-entities" aria-labelledby="flagged-entities-title">
+<h2 id="flagged-entities-title">Shared upstream entities flagged for review</h2>
+<p class="section-note">Each count is the minimum observed in the evidence retrieved: an entity may appear upstream of more suppliers than this run found. Open an entity to read the evidence behind it.</p>
+<div class="filter">
+<label for="report-filter"><strong>Filter shared-entity findings</strong></label><br>
+<input id="report-filter" type="search" placeholder="Company name, country or risk factor" aria-describedby="filter-count">
+<button id="clear-filter" type="button">Clear filter</button>
+<p id="filter-count" role="status" aria-live="polite"></p>
+<div id="no-match" class="notice" hidden>
+<p>No shared-entity finding in this report matched that text. Screening a new entity requires a new screening run.</p>
+<p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
+</div>
+</div>
+<div id="convergence-table" class="entity-list">
+{% for group in ranked_groups %}
+<div data-entity-group>
+<h3>{{ group.portfolio | supplier_list_label(headline) }} — {{ group.nodes | length }} entities, most connected first</h3>
+{% for node in group.nodes %}<details data-filter-row class="entity-card" data-disclosure open>
+<summary><span class="entity-summary">
+<span class="entity-identity"><strong>{{ node.label or 'Name unavailable' }}</strong>{% if node.translated_label %}<small>{{ node.translated_label }}</small>{% endif %}</span>
+<span class="entity-countries">{{ node.countries | join(', ') if node.countries else 'none returned' }}<small>{{ node.country_count }} {{ 'country' if node.country_count == 1 else 'countries' }}</small></span>
+<span class="entity-metrics"><strong>{{ node.supplier_count }}</strong> distinct suppliers<small>{{ node.severe_factors | length }} critical/high {{ 'factor' if node.severe_factors | length == 1 else 'factors' }}</small></span>
+</span></summary>
+<div class="disclosure-body">
+<h4>Connected supplier evidence</h4>
+<ul>{% for supplier in node.suppliers %}<li>{{ supplier.label or 'Name unavailable' }}{% if supplier.translated_label %} — {{ supplier.translated_label }}{% endif %}</li>{% endfor %}</ul>
+<h4>Reported risk factors</h4>
+<p>Reported for this upstream entity. Critical and high factors are shown first, followed by other returned factors. Levels describe factors, not an overall rating for this entity.</p>
+{{ factors(node.severe_factors, additional=node.other_factors) }}
+</div>
+</details>{% endfor %}
+</div>
+{% else %}<p>No shared entities flagged for review in this retrieved evidence. This is not exhaustive supply-chain coverage; see the selection steps and coverage states.</p>{% endfor %}
+</div>
+{{ pagination('entity', 'Shared-entity pages', 'convergence-table') }}
+</section>
+<section id="methodology" aria-labelledby="methodology-title">
+<h2 id="methodology-title">Methodology and limitations</h2>
+<h3>Scope and coverage</h3>
+<ul>
+<li>For each matched supplier, Sayari&rsquo;s upstream trade network was searched up to {{ manifest.get('max_upstream_depth', 'unavailable') }} steps, returning at most {{ manifest.get('upstream_limit', 'unavailable') }} supply chain paths. Entities along those paths can outnumber the path limit. <strong>Fully assessed</strong> means upstream evidence was found and Sayari did not flag the search as partial. A search can stop at the path limit without being flagged as partial.</li>
+<li>Every count here is a <strong>minimum.</strong> It describes what the search returned, not everything that exists, and it is not exhaustive supply-chain coverage.</li>
+<li>Every supplier is given one of five coverage states &mdash; fully assessed, partially assessed, no upstream data found, retrieval issue, or not assessed &mdash; each explained beside its count earlier in this report. All five describe what this search retrieved, not what Sayari holds and not what exists: not assessed means no search was run for that supplier, and <strong>no state, fully assessed included, means a supplier is free of risk.</strong></li>
+</ul>
+<h3>Sayari API configuration</h3>
+{% set depth = manifest.get('max_upstream_depth') %}
+<ul>
+<li>Every company, connection and risk factor on this page comes from <strong>Sayari&rsquo;s own data,</strong> retrieved through the official Sayari Python SDK. Nothing is modelled or estimated, and the only input from outside Sayari is the supplier list that was screened.</li>
+<li>Three Sayari endpoints are used: <code>resolution</code> to match each supplier to a Sayari identity, <code>entity_summary</code> to read that identity&rsquo;s profile and risk factors, and <code>upstream_trade_traversal</code> to retrieve its upstream trade network.</li>
+<li>Each supplier is matched on its name, address and country. Resolution returns one page of at most {{ resolution_page_max }} candidates.</li>
+<li>The trade search runs to a depth of {{ depth or 'unavailable' }}. <strong>Tier 1 is the screened supplier itself,</strong> so this limit allows paths as far as Tier {{ depth + 1 if depth else 'unavailable' }}. Displayed tiers retain Sayari&rsquo;s annotations.</li>
+<li>Each search returns at most {{ manifest.get('upstream_limit', 'unavailable') }} supply chain paths, and at most {{ manifest.get('path_max_per_node', 'unavailable') }} example paths are kept for each listed entity.</li>
+</ul>
+<h3>Entity selection criteria</h3>
+<ul>
+<li>An entity is listed when it sits upstream of <strong>more than one</strong> of the matched suppliers on this list. Entities are ordered by how many suppliers reach them, then by fewest countries.</li>
+<li>A supply chain path counts for <strong>every entity along it,</strong> not only the company it ends at. A path that reaches an entity and carries on further upstream is still evidence for that entity.</li>
+<li>Sayari often returns more paths than this report shows. Examples are taken from each connected supplier in rotation, never ranked, so they cover as many suppliers as possible. Only {{ manifest.get('path_max_per_node', 'unavailable') }} are kept for each entity, so where more than {{ manifest.get('path_max_per_node', 'unavailable') }} suppliers reach the same entity, some of them have no example in this report.</li>
+<li>Each route ends at the entity it is listed under. Where Sayari&rsquo;s path continued further upstream, the route says so rather than listing the companies beyond that point.</li>
+<li>Entities present in more than {{ manifest.get('hub_max_countries', 'unavailable') }} countries are set aside before the risk rules are applied. Entities in many countries are typically logistics providers, trading intermediaries or large distributors: they sit upstream of almost everyone and would crowd out the list without distinguishing between suppliers. This is a screening choice made here, <strong>not a Sayari assessment,</strong> and it classifies no individual entity.</li>
+</ul>
+<h3>Risk classification</h3>
+<ul>
+<li>An entity qualifies for review on Sayari&rsquo;s own published <strong>critical</strong> and <strong>high</strong> levels, applied after the country limit above.</li>
+<li>Elevated and relevant factors appear as context only and never place an entity on this list by themselves. Neither do factors Sayari publishes no definition for, which appear under their original identifiers. Selection never matches on words in a factor&rsquo;s name.</li>
+<li>Seed, network and PSA factors keep the risk type Sayari published for them. <strong>PSA means &ldquo;possibly the same as&rdquo;</strong>: a possible match to another Sayari record, never a confirmed one. A factor labelled &ldquo;Possibly the Same As (PSA)&rdquo; is itself such a match; one labelled &ldquo;May Include 'PSA' Path&rdquo; means the risk path may pass through one. Either way the link is unconfirmed, and network factors keep their network classification.</li>
+<li>A network value is Sayari&rsquo;s reported <strong>distance to the nearest risk target</strong> &mdash; not a score, and not the tier numbers shown on trade paths. Values without interpreted units are kept in the findings data and omitted from the displayed value sentences.</li>
+</ul>
+{% set taxonomy = manifest.get('taxonomy', {}) %}
+{% if taxonomy.get('unresolved_factors') %}<p>Unresolved factor codes: {{ taxonomy.unresolved_factors | join('; ') }}. No published definition in the committed ontology snapshot.</p>{% endif %}
+</section>
+</main>
+
+</body>
+</html>

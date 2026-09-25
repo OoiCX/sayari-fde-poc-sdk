@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-09-21T06:22:52.987311+00:00",
+  "filters": {},
+  "sha256": "c5b55c5866b0e05ae7a5baa51d0d8774c4f2e6231d517126c524b5903bf8b016",
+  "sdk_version": "0.1.43",
+  "sdk_method": "ontology.get_risk_factors",
+  "sdk_response_validation": {
+    "status": "rejected_missing_unused_field",
+    "field": "do_not_render_metadata",
+    "affected_records": 149
+  },
+  "capture_time_basis": "raw SDK response cache write"
+}

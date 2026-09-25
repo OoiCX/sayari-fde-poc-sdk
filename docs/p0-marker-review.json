@@ -1,0 +1,122 @@
+{
+  "path_key": "sha256-posix-relative",
+  "reviews": {
+    "9b5473401d6cfb4fc6cf5f6284dfe57df1ad495cc97cb5f26a8b989e4e73b411": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "aade0a6630bab9177cac8faccd74a531f32687a948186e61c848f662fd956665"
+    },
+    "988f09546b515b7a1761256448474c65823f5427d3b8c49d6c1fa4b4a0573c46": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "d94b6afd5d7d01697564f062455d09ac48eee2cfe08940ce269fc26a309c3688"
+    },
+    "c5b1b03cb7aaa2a51974c6ec6f0b4d203e5b42989d01edc6079a82def03a6549": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "96c2a746a55c800f0775c9be4da06deeea81c15dea5bd194fb1ae137f32bdcf3"
+    },
+    "f6df4aa3d77256234d9f831d340170f19289ba9f8d8a2d21f6bb5280772e4b71": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "e238495f56983354867d9238b680295b15858cde61bb5ed9d9cd03ef516f0b6e"
+    },
+    "ccc8cb3df454862a3e23dd8390c4955c02b5e83089c8f8d68a7de11001150a4b": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "1dd479ab7776a49b12a70cc2b4253def9a96c9901019c36c62baa87bb87bff1c"
+    },
+    "ea2854add3716daab75b1a596f3f45aa698e2dfb5b802677c4521a6ba01a6f7b": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "e66e36fe3fefcf48bc9b2d5a6e617d1ed1199e4a5b6f325910c7c3cfca6f715f"
+    },
+    "976317de7acd978684f73cc45b7c48dc9d8270d9ee7c9beca9fc7a25eed58c4f": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "f7e7c699cba8c78f1ce8fb78eed57cf82a58659a0f4cbe65d47d6483c95edeeb"
+    },
+    "f6a205cd778e05c78c4b307b3bd3c5591809b198c751b7a480e025971e9ade6d": {
+      "categories": [
+        "authorization"
+      ],
+      "reason": "Registry attribute types and risk-event text/source links; reviewed at schema locations, not an HTTP authorization header.",
+      "sha256": "57297907ceec61a86af6da82da6e0d52f3ad841247bff042325b598541953cd6"
+    },
+    "1508547cb860aa8b71004d7b66256866b5de59fe4f48e6256b8c038efb6385c0": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "ad5fa745b00659c520f20a88dc10770bc56c015665e775753a5d6707c5b0e816"
+    },
+    "d24dbfdb9c9d71c0e091df6b63fe1b08dd12626abdd9aa5a206930c327f2ab3e": {
+      "categories": [
+        "eyj"
+      ],
+      "reason": "Opaque entity/reference IDs, traversal metadata or pagination cursors contain this substring; reviewed schema locations, not OAuth credentials.",
+      "sha256": "42e7261357b5f1c3972ece23ad74a5594c955195303bdef3c69f463ef7698d22"
+    },
+    "a322290c69cfa92fda421789abb59bffc1e630d33c9d4abdc020acbaa1c05e15": {
+      "categories": [
+        "authorization"
+      ],
+      "reason": "Published ontology labels and definitions contain regulatory authorization wording, not HTTP authentication headers. Reviewed source fields and the rendered text; configured credential checks remain mandatory.",
+      "sha256": "c5b55c5866b0e05ae7a5baa51d0d8774c4f2e6231d517126c524b5903bf8b016"
+    },
+    "4f2515fa865b106a0accd11e6bca56a8fe74754574404d71519b2523e38fffe6": {
+      "categories": [
+        "authorization"
+      ],
+      "reason": "Published ontology labels and definitions contain regulatory authorization wording, not HTTP authentication headers. Reviewed source fields and the rendered text; configured credential checks remain mandatory. Methodology-rewrite re-review: the report was re-rendered from the unchanged findings.json, all eight authorization hits remain the NDAA Section 889 ontology labels, the rewritten section contains no marker text, and the detected category set is unchanged.",
+      "sha256": "9e1881e103dfa167e565e25efe9c84078f44395a298b311f59db5acf17b5e2be"
+    },
+    "ef9a2a1a087de80672ce5f4d3a32e3602394b689d008db98db8de8479b84f035": {
+      "categories": [
+        "access_token",
+        "authorization",
+        "bearer",
+        "client_id",
+        "client_secret",
+        "expires_in",
+        "eyj",
+        "grant_type",
+        "private_absolute_path",
+        "refresh_token",
+        "token_type"
+      ],
+      "reason": "Scanner detection literals and synthetic encoded-secret/path test cases; absolute-path markers are the detector pattern or fictional test path. P1 criterion 11 re-review: explicit scan paths are now required; stale fallback removed and missing-path regression added. Marker categories remain documentation/test literals; LF bytes preserved.",
+      "sha256": "c07c9423e31686cbf8c8f097540ab4d4bdf224f6edb22524eb967737e292f31a"
+    },
+    "24db9ec7ee93e12617c54aa7c175a951c913d5acc5ab2d0426ba4c2725b11312": {
+      "categories": [
+        "access_token",
+        "authorization",
+        "bearer",
+        "private_absolute_path",
+        "token_type"
+      ],
+      "reason": "Scanner detection literals and synthetic encoded-secret/path test cases; absolute-path markers are the detector pattern or fictional test path. P1 criterion 11 re-review: explicit scan paths are now required; stale fallback removed and missing-path regression added. Marker categories remain documentation/test literals; LF bytes preserved.",
+      "sha256": "101ec28fee637707ebda5c2528350e47b301234a6daa95a62cd092883f39fa5d"
+    },
+    "5f0a8bf52de5dd27429690671331b75f18ef27cd5197eb3a0b8e6ed32c339c32": {
+      "categories": [],
+      "reason": "R15 current SDK audit index; the reference-era original is no longer retained. No marker text remains in the current index, so this record is a content pin only.",
+      "sha256": "517dc15133ed90aa1afe19a31227c90cb98faf517f6978f885aa20cb94b2bd18"
+    }
+  }
+}

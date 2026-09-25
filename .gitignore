@@ -1,0 +1,47 @@
+# Secrets — never committed.
+.env
+.env.*
+!.env.example
+
+# Genuinely private material a user drops in. Nothing here is ever committed.
+# The supplied exercise workbook is NOT here — it is tracked at data/input/,
+# because a clean clone cannot ingest anything without it and D1 depends on it.
+data/private/*
+!data/private/.gitkeep
+
+# Build artefacts only. Everything the pipeline generates lives here and is
+# regenerable: findings.json, report.html, the CSV, run_manifest.json, the
+# DuckDB file.
+data/processed/*
+!data/processed/.gitkeep
+
+# NOT ignored, deliberately:
+#   data/cache/   the Sayari response cache — committed evidence
+#   data/public/  the committed Sayari risk ontology snapshot
+# Together these are what let a credential-less reviewer run the pipeline
+# offline from a clean clone. Do not move either under data/processed/.
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.venv-*/
+
+# Tooling
+.pytest_cache/
+.pytest_tmp/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+# Office lock files (~$name.docx) record the editing user's name while a file is open.
+~$*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Read-only token: nothing in this workflow writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an older run pointless, so cancel it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Actions are pinned to full commit SHAs so a moved tag can't change what runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      # Node runs the report's inline JavaScript in the test suite; without it that test skips.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install locked environment
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+      - name: Development install without changing locked dependencies
+        env:
+          PIP_NO_DEPS: "true"
+        run: pip install -e ".[dev]"
+      - run: pytest -q
+      - run: ruff check src tests scripts
+      - run: ruff format --check src tests scripts
+      - run: mypy --strict src tests
+      - run: mypy --strict scripts
+      - run: python scripts/scan_fixtures.py --app-credentials --reviewed-markers docs/p0-marker-review.json data/cache data/input data/public tests/fixtures scripts tests/unit/test_scan_fixtures.py docs/report.html
+      # The PoC's core claim: a clean clone rebuilds the published report from the committed
+      # cache, offline and without credentials, byte for byte (README, "Exact byte reproduction").
+      - name: Reproduce the published report offline
+        env:
+          DECLARED_GENERATED_AT: "2026-09-24T01:52:59.468774+00:00"
+        run: |
+          python -m sayari_poc run --sheet list_3 --offline
+          cmp docs/report.html data/processed/report.html
