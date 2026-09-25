@@ -594,7 +594,6 @@ def test_offline_artifacts_protected_blocks_and_repeat_replay(
     configured, cache = graph
     output = tmp_path / "out"
     before = pipeline.run_pipeline(configured, all_sheets=True, offline=True, output_dir=output)
-    before_csv = (output / "flagged_subtier_entities.csv").read_bytes()
     before_html = (output / "report.html").read_text(encoding="utf-8")
     before_manifest = json.loads((output / "run_manifest.json").read_text(encoding="utf-8"))
     for i in range(1, 7):
@@ -627,7 +626,6 @@ def test_offline_artifacts_protected_blocks_and_repeat_replay(
     assert set(after.model_dump()) - set(OLD_FINDINGS_KEYS) == {"paths", "ontology"}
     old_manifest_keys = set(MANIFEST_KEYS) - {"path_max_per_node"}
     assert set(cast(dict[str, Any], after.manifest)) - old_manifest_keys == {"path_max_per_node"}
-    assert (output / "flagged_subtier_entities.csv").read_bytes() == before_csv
     # The report shows the formatted date, not the raw timestamp. Mask both, or this comparison
     # fails whenever the two runs fall in different minutes.
     after_html = (
@@ -665,7 +663,7 @@ def test_offline_artifacts_protected_blocks_and_repeat_replay(
     assert cast(dict[str, Any], after.paths)["nodes"]["n-top"]["retrieved_path_count"] == 30
     assert cast(dict[str, Any], after.paths)["nodes"]["n-top"]["stored_path_count"] == 6
     assert cast(dict[str, Any], after.paths)["nodes"]["n-boundary"]["retrieved_path_count"] == 0
-    artifacts = ["findings.json", "report.html", "flagged_subtier_entities.csv"]
+    artifacts = ["findings.json", "report.html"]
     first_bytes = [(output / name).read_bytes() for name in artifacts]
     repeated = pipeline.run_pipeline(configured, all_sheets=True, offline=True, output_dir=output)
     assert repeated == after

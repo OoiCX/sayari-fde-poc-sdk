@@ -32,7 +32,7 @@ from sayari_poc.models import (
     ResolvedEntity,
     UpstreamResult,
 )
-from sayari_poc.report import export_csv, render_report
+from sayari_poc.report import render_report
 from sayari_poc.resolve import resolve_entities
 from sayari_poc.risk_taxonomy import RiskOntology, load_ontology
 from sayari_poc.rollups import supplier_breakdown
@@ -271,7 +271,7 @@ def run_pipeline(
         offline: Require cached evidence and prohibit network requests.
         sheets: Ordered worksheet selection; defaults to list_3.
         all_sheets: Read every worksheet in workbook order instead of sheets.
-        output_dir: Destination for Findings, HTML, CSV, and execution manifest.
+        output_dir: Destination for Findings, HTML, and execution manifest.
 
     Returns:
         Completed evidence, including isolated row failures.
@@ -286,7 +286,6 @@ def run_pipeline(
     for name in (
         "findings.json",
         "report.html",
-        "flagged_subtier_entities.csv",
         "run_manifest.json",
         "run_manifest.tmp",
     ):
@@ -374,7 +373,6 @@ def run_pipeline(
         reuse_generated_at=settings.declared_generated_at is None,
     )
     render_report(findings, output_dir / "report.html")
-    export_csv(findings, output_dir / "flagged_subtier_entities.csv")
     _write_run_manifest(
         _run_manifest(
             findings,
@@ -386,7 +384,7 @@ def run_pipeline(
         output_dir / "run_manifest.json",
     )
     _LOGGER.info(
-        "outputs complete: artifacts_written=4 exception_rows=%d", len(findings.exceptions)
+        "outputs complete: artifacts_written=3 exception_rows=%d", len(findings.exceptions)
     )
     # Stages isolate row failures, but the run as a whole must still fail loudly on cache misses.
     if any(item.get("error_type") == "OfflineCacheMiss" for item in findings.exceptions):

@@ -218,7 +218,7 @@ class OntologyFactor(BaseModel):
 
 
 class Findings(BaseModel):
-    """Complete stage evidence shared by static report and CSV consumers."""
+    """Complete stage evidence that the static report is rendered from."""
 
     # When the artifacts were generated (declared or carried over). It says nothing about how fresh
     # the source data is.

@@ -333,5 +333,4 @@ def test_report_cannot_open_database_or_cache(
     monkeypatch.setattr(ResponseCache, "get", guard)
     monkeypatch.setattr(ResponseCache, "put", guard)
     report.render_report(findings, tmp_path / "report.html")
-    report.export_csv(findings, tmp_path / "flagged.csv")
     guard.assert_not_called()

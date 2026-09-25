@@ -355,10 +355,7 @@ def test_replay_only_changes_execution_fields(
     clock.now.side_effect = lambda _: next(moments)
     monkeypatch.setattr(pipeline, "datetime", clock)
     pipeline.run_pipeline(configured, all_sheets=True, offline=False)
-    paths = [
-        Path("data/processed") / name
-        for name in ["findings.json", "report.html", "flagged_subtier_entities.csv"]
-    ]
+    paths = [Path("data/processed") / name for name in ["findings.json", "report.html"]]
     before = [path.read_bytes() for path in paths]
     first = _manifest()
     pipeline.run_pipeline(configured, all_sheets=True, offline=True)

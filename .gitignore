@@ -10,8 +10,8 @@ data/private/*
 !data/private/.gitkeep
 
 # Build artefacts only. Everything the pipeline generates lives here and is
-# regenerable: findings.json, report.html, the CSV, run_manifest.json, the
-# DuckDB file.
+# regenerable: findings.json, report.html, run_manifest.json and the DuckDB
+# file.
 data/processed/*
 !data/processed/.gitkeep
 

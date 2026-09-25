@@ -1,9 +1,7 @@
-"""Render self-contained HTML and spreadsheet-safe CSV from Findings."""
+"""Render the self-contained HTML report from Findings."""
 
-import csv
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 
@@ -11,11 +9,8 @@ from sayari_poc.models import Findings
 from sayari_poc.presentation import (
     build_report_view,
     exception_note,
-    headline_portfolio,
     supplier_list_label,
 )
-
-CSV_COLUMNS = ("entity_id", "label", "translated_label", "countries", "supplier_count", "factors")
 
 # The SDK defaults resolution to a ten-entry page and we send neither limit nor offset, so a full
 # page is a lower bound on candidates. See sayari/resolution/client.py: ResolutionClient.resolution.
@@ -165,38 +160,3 @@ def render_report(findings: Findings, out: Path) -> None:
     html = environment.get_template("report.html.j2").render(**view.context())
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8", newline="\n")
-
-
-def _csv_cell(value: object) -> str:
-    """Neutralize spreadsheet formulas in the export copy of a cell."""
-    text = "" if value is None else str(value)
-    # Quoting a CSV field doesn't stop a spreadsheet running it as a formula, so prefix a quote
-    # mark. Only the exported copy changes.
-    return "'" + text if text and text[0] in "=+-@\t\r" else text
-
-
-def export_csv(findings: Findings, out: Path) -> None:
-    """Export ranked headline survivors as spreadsheet-safe cells."""
-    out.parent.mkdir(parents=True, exist_ok=True)
-    # The BOM lets Excel read native-script labels correctly on machines with a Western locale.
-    with out.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.writer(stream, lineterminator="\r\n")
-        writer.writerow(CSV_COLUMNS)
-        for node in findings.shared_nodes:
-            if node.get("portfolio") != headline_portfolio(findings):
-                continue
-            countries: Any = node.get("countries") or []
-            factors: Any = node.get("severe_factors") or []
-            writer.writerow(
-                [
-                    _csv_cell(value)
-                    for value in (
-                        node["upstream_id"],
-                        node.get("label"),
-                        node.get("translated_label"),
-                        ";".join(countries),
-                        node["supplier_count"],
-                        ";".join(factors),
-                    )
-                ]
-            )

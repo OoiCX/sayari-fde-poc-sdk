@@ -201,7 +201,6 @@ def test_identical_cache_replay_is_byte_identical(seeded_cache: Settings) -> Non
     paths = [
         Path("data/processed/findings.json"),
         Path("data/processed/report.html"),
-        Path("data/processed/flagged_subtier_entities.csv"),
     ]
     before = [p.read_bytes() for p in paths]
     second = run_pipeline(seeded_cache, limit=1, offline=True)
@@ -223,7 +222,7 @@ def test_declared_generation_is_verbatim_and_cold_replays_match(seeded_cache: Se
     declared = "2026-09-19T12:38:32.773832+00:00"
     configured = seeded_cache.model_copy(update={"declared_generated_at": declared})
     output = Path("data/processed")
-    names = ("findings.json", "report.html", "flagged_subtier_entities.csv", "run_manifest.json")
+    names = ("findings.json", "report.html", "run_manifest.json")
     first = run_pipeline(configured, limit=1, offline=True)
     before = {name: (output / name).read_bytes() for name in names}
     assert first.generated_at == declared

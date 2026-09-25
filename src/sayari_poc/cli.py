@@ -134,7 +134,6 @@ def _run_command(argv: Sequence[str] | None) -> int:
     print(f"Suppliers: {len(findings.suppliers)}; exceptions: {len(findings.exceptions)}")
     print(f"Findings: {OUTPUT_DIR / 'findings.json'}")
     print(f"Report: {OUTPUT_DIR / 'report.html'}")
-    print(f"CSV: {OUTPUT_DIR / 'flagged_subtier_entities.csv'}")
     return (
         1
         if any(

@@ -1,6 +1,5 @@
 """Task 12 integration contracts: synthetic workbook, cached stages, no network."""
 
-import csv
 import html as html_module
 import json
 import re
@@ -619,43 +618,13 @@ def test_svg_fallback_preserves_complete_report(
     assert table.count("data-filter-row") == len(cast(list[dict[str, Any]], findings.shared_nodes))
 
 
-@pytest.mark.parametrize("prefix", ["=", "+", "-", "@", "\t", "\r"])
-def test_csv_exact_contract_unicode_order_and_formula_safety(
-    findings: Findings,
-    tmp_path: Path,
-    prefix: str,
-) -> None:
-    # CSV exports keep their schema, Unicode and ranking, and every cell stays spreadsheet-safe.
-    nodes = [
-        n for n in cast(list[dict[str, Any]], findings.shared_nodes) if n["portfolio"] == "list_3"
-    ]
-    nodes[0]["label"] = prefix + '测试,"value"'
-    original = findings.model_dump(mode="json")
-    path = tmp_path / "flagged_subtier_entities.csv"
-    report.export_csv(findings, path)
-    assert path.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert b"\r\n" in path.read_bytes()
-    with path.open(encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream))
-    assert tuple(rows[0]) == report.CSV_COLUMNS
-    assert [r["entity_id"] for r in rows] == [n["upstream_id"] for n in nodes]
-    assert rows[0]["label"] == "'" + nodes[0]["label"]
-    assert rows[1]["countries"] == ";".join(nodes[1]["countries"])
-    assert rows[0]["factors"] == ";".join(nodes[0]["severe_factors"])
-    assert findings.model_dump(mode="json") == original
-    assert nodes[0]["label"] in html_module.unescape(_html(findings, tmp_path))
-
-
 def test_identical_offline_runs_preserve_all_artifact_bytes(
     findings: Findings,
     graph: tuple[Settings, ResponseCache],
     tmp_path: Path,
 ) -> None:
     # Repeating a cached run reproduces every artifact byte-for-byte with zero HTTP attempts.
-    paths = [
-        tmp_path / "out" / name
-        for name in ["findings.json", "report.html", "flagged_subtier_entities.csv"]
-    ]
+    paths = [tmp_path / "out" / name for name in ["findings.json", "report.html"]]
     before = [path.read_bytes() for path in paths]
     manifest_path = tmp_path / "out/run_manifest.json"
     first_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -939,16 +908,14 @@ def test_ranked_table_identifies_scope_and_leads_with_headline(
     assert "after_hub_suppression</td>" not in html
 
 
-def test_json_and_html_use_lf_and_csv_retains_crlf(
+def test_json_and_html_use_lf(
     findings: Findings,
     tmp_path: Path,
 ) -> None:
-    # Each artifact writer keeps its declared, deterministic line endings.
+    # Both artifacts are written with LF line endings on every platform, so their bytes match.
     for name in ["findings.json", "report.html"]:
         content = (tmp_path / "out" / name).read_bytes()
         assert b"\n" in content and b"\r\n" not in content
-    content = (tmp_path / "out/flagged_subtier_entities.csv").read_bytes()
-    assert b"\r\n" in content and b"\n" not in content.replace(b"\r\n", b"")
 
 
 def test_list_3_only_preserves_pre_r1_convergence_and_coverage(

@@ -92,7 +92,6 @@ def test_malformed_supplier_evidence_preserves_every_other_supplier(
         for name in (
             "findings.json",
             "report.html",
-            "flagged_subtier_entities.csv",
             "run_manifest.json",
         )
     )
