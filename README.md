@@ -22,3 +22,9 @@ Double-click `report.html`. It opens in your default browser.
 
 Don't open it by clicking the file on GitHub: GitHub shows the file's source code,
 not the report.
+
+## Running the analysis on live data
+
+Reading the report needs nothing else. Rerunning the analysis against Sayari's live
+data needs your own Sayari API credentials (a client ID and client secret); none are
+included in this repository.
