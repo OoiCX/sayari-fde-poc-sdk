@@ -3,12 +3,6 @@
 .env.*
 !.env.example
 
-# Genuinely private material a user drops in. Nothing here is ever committed.
-# The supplied exercise workbook is NOT here — it is tracked at data/input/,
-# because a clean clone cannot ingest anything without it and D1 depends on it.
-data/private/*
-!data/private/.gitkeep
-
 # Build artefacts only. Everything the pipeline generates lives here and is
 # regenerable: findings.json, report.html, run_manifest.json and the DuckDB
 # file.

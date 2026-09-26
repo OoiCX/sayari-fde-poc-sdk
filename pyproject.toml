@@ -61,7 +61,6 @@ extend-exclude = [
     ".pytest_tmp",
     ".mypy_cache",
     ".ruff_cache",
-    "data/private",
 ]
 
 [tool.ruff.lint]
@@ -73,7 +72,6 @@ strict = true
 plugins = ["pydantic.mypy"]
 exclude = [
     "^\\.venv/",
-    "^data/private/",
 ]
 
 # DuckDB imports NumPy stubs for array APIs this project does not use.
