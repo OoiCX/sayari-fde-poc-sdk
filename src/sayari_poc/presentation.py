@@ -139,6 +139,14 @@ def supplier_list_label(portfolio: str | None, headline: str | None) -> str:
     return "Screened supplier list" if portfolio == headline else f"Supplier list: {portfolio}"
 
 
+def risk_categories(slugs: list[str], glossary: dict[str, OntologyFactor]) -> list[str]:
+    """List the published categories of these factors, sorted and without repeats."""
+    # A factor missing from the ontology has no published category, so it adds nothing.
+    return sorted(
+        {category for slug in slugs if slug in glossary for category in glossary[slug].categories}
+    )
+
+
 @dataclass(frozen=True)
 class ExecutiveSummary:
     """Display counts retain their source grain and evidence bounds."""
@@ -246,6 +254,12 @@ class ReportView:
     ranked_groups: list[dict[str, Any]]
     convergence_portfolios: list[str]
     supplier_rows: list[SupplierRow]
+    # Dropdown choices for the two filters. Each lists only values some card carries, so no
+    # choice can lead to an empty list on its own.
+    supplier_country_codes: list[str]
+    entity_country_codes: list[str]
+    evidence_options: list[tuple[str, str]]
+    category_options: list[tuple[str, str]]
 
     def context(self) -> dict[str, Any]:
         """The view is the template's only evidence boundary."""
@@ -529,6 +543,16 @@ def build_report_view(findings: Findings) -> ReportView:
         coverage_assessed=coverage.get("assessed", 0),
         coverage_partial=coverage.get("partial", 0),
     )
+    # Read each supplier's state the same way its card displays it, so the filter and the card
+    # always agree.
+    states = {str(row.get("coverage_status") or "not_attempted") for row in findings.suppliers}
+    # Categories come from the critical and high factors only, because those are why an entity
+    # is flagged. The label is Sayari's own category name with its underscores removed.
+    categories = {
+        category
+        for node in findings.shared_nodes
+        for category in risk_categories(cast(list[str], node["severe_factors"]), findings.ontology)
+    }
     return ReportView(
         generated_at=findings.generated_at,
         coverage=findings.coverage,
@@ -546,4 +570,20 @@ def build_report_view(findings: Findings) -> ReportView:
         ranked_groups=ranked_groups,
         convergence_portfolios=convergence_portfolios,
         supplier_rows=_supplier_rows(findings),
+        supplier_country_codes=sorted(
+            {str(row["input_country"]) for row in findings.suppliers if row.get("input_country")}
+        ),
+        entity_country_codes=sorted(
+            {
+                code
+                for node in findings.shared_nodes
+                for code in cast(list[str], node.get("countries") or [])
+            }
+        ),
+        evidence_options=[
+            (state, label) for state, label in COVERAGE_LABELS.items() if state in states
+        ],
+        category_options=[
+            (category, category.replace("_", " ").capitalize()) for category in sorted(categories)
+        ],
     )

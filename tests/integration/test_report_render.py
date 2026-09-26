@@ -490,7 +490,7 @@ def test_report_sections_ranked_table_and_self_containment(
         "lower bounds",
         "original identifier for it instead of a name",
         "Add the entity to the supplier workbook",
-        "No shared-entity finding in this report matched that text.",
+        "No shared-entity finding in this report matched the current search and filters.",
         "Screening a new entity requires a new screening run.",
     ]:
         assert phrase.casefold() in html.casefold()
@@ -691,16 +691,31 @@ const control = () => ({
   scrollIntoView() { this.scrolled = true; }
 });
 const input = control(), clear = control(), supplierInput = control(), supplierClear = control();
+const entityCountry = control(), entityCategory = control();
+const supplierCountry = control(), supplierEvidence = control();
 const count = {}, empty = {}, supplierCount = {}, supplierEmpty = {};
 const disclosure = textContent => ({
-  textContent, hidden: false, open: true, summary: control(),
+  textContent, hidden: false, open: true, summary: control(), dataset: {},
   querySelector(selector) { assert.equal(selector, 'summary'); return this.summary; },
   removeAttribute(name) { assert.equal(name, 'open'); this.open = false; }
 });
 const rows = EMPTY_COLLECTIONS ? [] : Array.from({length: 24}, (_, i) =>
-  disclosure(i === 0 ? 'convergence 测试' : `entity ${i} ${i === 23 ? 'offpage needle' : ''}`));
+  disclosure(i === 0 ? 'convergence 测试' : `entity ${i} ${i === 23 ? 'offpage needle' : ''}` +
+    (i === 5 ? ' Eberspächer' : '')));
+// Synthetic dropdown values: PHL on every third entity, sanctions on the odd ones.
+rows.forEach((row, i) => {
+  row.dataset = {
+    countries: i % 3 ? 'CHN' : 'PHL MYS', categories: i % 2 ? 'sanctions' : 'export'
+  };
+});
 const exhibits = [{textContent:'diagram 测试', hidden: false}];
 const suppliers = SUPPLIER_TEXT.map(disclosure);
+// DEU on every fifth supplier, not_attempted on every fourth.
+suppliers.forEach((supplier, i) => {
+  supplier.dataset = {
+    countries: i % 5 ? 'JPN' : 'DEU', evidence: i % 4 ? 'assessed' : 'not_attempted'
+  };
+});
 const nested = Array.from({length: NESTED_COUNT}, () => disclosure('route'));
 const disclosures = [...rows, ...suppliers, ...nested];
 if (rows.length) {
@@ -738,6 +753,8 @@ global.document = {
     'report-filter': input, 'clear-filter': clear, 'filter-count': count, 'no-match': empty,
     'supplier-filter': supplierInput, 'clear-supplier-filter': supplierClear,
     'supplier-filter-count': supplierCount, 'supplier-no-match': supplierEmpty,
+    'entity-country': entityCountry, 'entity-category': entityCategory,
+    'supplier-country': supplierCountry, 'supplier-evidence': supplierEvidence,
     ...controls
   })[id],
   querySelectorAll: selector => ({
@@ -857,6 +874,43 @@ if (EMPTY_COLLECTIONS) {
   clear.click(); assert.equal(input.value, ''); assert.equal(empty.hidden, true);
   assert.deepEqual(visible(rows), rows.slice(0, 10)); assert.equal(exhibits[0].hidden, false);
   assert.equal(input.focused, true);
+  // A dropdown matches one data attribute exactly, combines with the keyword, and leaves the
+  // other list alone; Clear resets it with the keyword.
+  entityCountry.value = 'PHL'; entityCountry.change();
+  const inPhl = rows.filter(r => r.dataset.countries.split(' ').includes('PHL'));
+  assert.equal(inPhl.length, 8);
+  assert.deepEqual(visible(rows), inPhl);
+  assert.equal(count.textContent, '8 of 24 shared entity rows match');
+  assert.deepEqual(visible(suppliers), suppliers.slice(0, 10));
+  entityCategory.value = 'sanctions'; entityCategory.change();
+  assert.deepEqual(visible(rows), [rows[3], rows[9], rows[15], rows[21]]);
+  assert.equal(empty.hidden, true);
+  input.value = 'needle'; input.input();
+  assert.ok(rows.every(r => r.hidden)); assert.equal(empty.hidden, false);
+  clear.click();
+  assert.equal(entityCountry.value, ''); assert.equal(entityCategory.value, '');
+  assert.equal(input.value, ''); assert.equal(empty.hidden, true);
+  assert.equal(count.textContent, '24 of 24 shared entity rows match');
+  // A code must equal a whole value, so "CH" does not pick up "CHN".
+  entityCountry.value = 'CH'; entityCountry.change();
+  assert.ok(rows.every(r => r.hidden)); assert.equal(empty.hidden, false);
+  clear.click();
+  supplierCountry.value = 'DEU'; supplierCountry.change();
+  const german = suppliers.filter(s => s.dataset.countries === 'DEU');
+  assert.equal(german.length, 10);
+  assert.deepEqual(visible(suppliers), german);
+  assert.equal(supplierCount.textContent, '10 of 50 supplier entries match');
+  supplierEvidence.value = 'not_attempted'; supplierEvidence.change();
+  assert.deepEqual(visible(suppliers), [suppliers[0], suppliers[20], suppliers[40]]);
+  assert.equal(supplierEmpty.hidden, true);
+  supplierClear.click();
+  assert.equal(supplierCountry.value, ''); assert.equal(supplierEvidence.value, '');
+  assert.equal(supplierCount.textContent, '50 of 50 supplier entries match');
+  assert.equal(supplierInput.focused, true);
+  // Accents are ignored both ways, so a query typed without them still finds the name.
+  input.value = 'eberspacher'; input.input(); assert.deepEqual(visible(rows), [rows[5]]);
+  input.value = 'EBERSPÄCHER'; input.input(); assert.deepEqual(visible(rows), [rows[5]]);
+  clear.click();
   controls['supplier-next'].click();
 }
 const elements = [...rows, ...suppliers, ...groups];
@@ -883,6 +937,49 @@ assert.deepEqual(rows, originalRows); assert.deepEqual(suppliers, original);
         timeout=15,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_filter_dropdowns_match_what_each_card_displays(findings: Findings, tmp_path: Path) -> None:
+    # Every card carries the values its dropdowns filter on, and every dropdown choice reaches a
+    # card, so no choice can empty the list on its own.
+    html = _html(findings, tmp_path)
+    document = _Document()
+    document.feed(html)
+    view = presentation.build_report_view(findings)
+    suppliers = [attrs for _, attrs in document.tags if "data-supplier-row" in attrs]
+    assert [attrs["id"] for attrs in suppliers] == [row.dom_id for row in view.supplier_rows]
+    for attrs, row in zip(suppliers, view.supplier_rows, strict=True):
+        assert attrs["data-countries"] == (row.supplier.get("input_country") or "")
+        assert attrs["data-evidence"] == (row.supplier.get("coverage_status") or "not_attempted")
+    entities = [attrs for _, attrs in document.tags if "data-filter-row" in attrs]
+    nodes = [node for group in view.ranked_groups for node in group["nodes"]]
+    for attrs, node in zip(entities, nodes, strict=True):
+        assert attrs["data-countries"] == " ".join(node["countries"] or [])
+        assert attrs["data-categories"] == " ".join(
+            presentation.risk_categories(node["severe_factors"], findings.ontology)
+        )
+    cards = {"supplier": suppliers, "entity": entities}
+    keys = {"country": "data-countries", "evidence": "data-evidence", "category": "data-categories"}
+    for select_id in ("supplier-country", "supplier-evidence", "entity-country", "entity-category"):
+        scope, facet = select_id.split("-")
+        assert any(tag == "label" and attrs.get("for") == select_id for tag, attrs in document.tags)
+        block = re.search(rf'<select id="{select_id}"[^>]*>(.*?)</select>', html, re.S)
+        assert block is not None
+        options = re.findall(r'<option value="([^"]*)">([^<]*)</option>', block.group(1))
+        assert options[0][0] == "" and options[0][1].startswith("All ") and len(options) > 1
+        for value, _ in options[1:]:
+            assert any(value in (attrs.get(keys[facet]) or "").split() for attrs in cards[scope])
+
+
+def test_country_options_name_known_codes_and_keep_unknown_ones() -> None:
+    # Dropdown labels name each country and sort by that name; a code pycountry doesn't know
+    # stays as it is rather than being guessed.
+    assert report.country_options(["KOR", "DEU", "C0", "TWN"]) == [
+        ("C0", "C0"),
+        ("DEU", "Germany (DEU)"),
+        ("KOR", "South Korea (KOR)"),
+        ("TWN", "Taiwan (TWN)"),
+    ]
 
 
 def test_ranked_table_identifies_scope_and_leads_with_headline(
@@ -1518,7 +1615,8 @@ def test_supplier_disclosures_are_open_without_js_and_script_has_safe_single_hea
         assert forbidden not in html
     section = _section(html, "suppliers")
     assert (
-        "No supplier entry in this report matched that text. This report contains only "
+        "No supplier entry in this report matched the current search and filters. This report "
+        "contains only "
         "the supplier input rows screened in this run — screening a new entity requires a "
         "new screening run."
     ) in _visible_text(section)
@@ -1757,7 +1855,7 @@ def test_customer_report_omits_identifiers_and_duplicate_input_metadata(
     assert "also appear in the data export" in html
     table = _shared_findings(html)
     entries = re.findall(
-        r'<details data-filter-row class="entity-card" data-disclosure open>(.*?)</summary>',
+        r'<details data-filter-row class="entity-card" data-disclosure open[^>]*>(.*?)</summary>',
         table,
         re.S,
     )
@@ -1923,8 +2021,9 @@ def test_r19_factor_cards_have_one_flat_additional_disclosure(
 ) -> None:
     # Factor cards keep their additional evidence without nesting one disclosure in another.
     html = _html(findings, tmp_path)
-    cards = _shared_findings(html).split(
-        '<details data-filter-row class="entity-card" data-disclosure open>'
+    cards = re.split(
+        r'<details data-filter-row class="entity-card" data-disclosure open[^>]*>',
+        _shared_findings(html),
     )[1:]
     assert cards
     for card in cards:
@@ -1970,8 +2069,9 @@ def test_r19_badges_use_prefix_first_and_one_card_caveat(
     for node in findings.shared_nodes:
         node["severe_factors"] = [slug]
         node["other_factors"] = [slug]
-    card = _shared_findings(_html(findings, tmp_path)).split(
-        '<details data-filter-row class="entity-card" data-disclosure open>'
+    card = re.split(
+        r'<details data-filter-row class="entity-card" data-disclosure open[^>]*>',
+        _shared_findings(_html(findings, tmp_path)),
     )[1]
     badges = re.findall(r'<span class="factor-badge">(.*?)</span>', card)
     assert badges == (expected + (["critical"] if kind else [])) * 2

@@ -14,19 +14,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const pageSize = 10;
   const groups = [...document.querySelectorAll('[data-entity-group]')];
   const disclosures = [...document.querySelectorAll('[data-disclosure]')];
-  const normalize = value => value.normalize('NFKC').toLocaleLowerCase();
-  const setupList = (prefix, selector, inputId, clearId, countId, emptyId, noun, grouped) => {
+  // Fold width, case and accents, so "ＩＮＰＵＴ" finds "input" and "Eberspacher" finds "Eberspächer".
+  const normalize = value =>
+    value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase();
+  const setupList = (prefix, selector, inputId, clearId, countId, emptyId, noun, grouped, facets) => {
     const rows = [...document.querySelectorAll(selector)];
     // Search all rendered evidence, including collapsed details and other pages.
     const searchable = rows.map(element => [element, normalize(element.textContent)]);
     const input = document.getElementById(inputId);
+    // Each dropdown matches one data attribute exactly, so a country code can't match a word.
+    const selects = facets.map(([id, key]) => [document.getElementById(id), key]);
     const pager = document.getElementById(`${prefix}-pagination`);
     const previous = document.getElementById(`${prefix}-previous`);
     const next = document.getElementById(`${prefix}-next`);
     let page = 0;
     const update = (moveFocus = false) => {
       const term = normalize(input.value).trim();
-      const matching = searchable.filter(([, content]) => content.includes(term)).map(([row]) => row);
+      const chosen = selects.filter(([select]) => select.value);
+      const matching = searchable.filter(([row, content]) => content.includes(term) &&
+        chosen.every(([select, key]) => (row.dataset[key] || '').split(' ').includes(select.value)))
+        .map(([row]) => row);
       const pages = Math.ceil(matching.length / pageSize);
       page = Math.max(0, Math.min(page, pages - 1));
       const start = page * pageSize;
@@ -41,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       document.getElementById(countId).textContent = `${matching.length} of ${rows.length} ${noun} match`;
-      document.getElementById(emptyId).hidden = !term || matching.length !== 0;
+      document.getElementById(emptyId).hidden = !(term || chosen.length) || matching.length !== 0;
       const range = matching.length ? `${start + 1}–${start + visible.length}` : '0';
       document.getElementById(`${prefix}-page-status`).textContent = `Showing ${range} of ${matching.length} ${noun}`;
       document.getElementById(`${prefix}-page-number`).textContent = `Page ${pages ? page + 1 : 0} of ${pages}`;
@@ -54,8 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
     input.addEventListener('input', () => { page = 0; update(); });
+    selects.forEach(([select]) => select.addEventListener('change', () => { page = 0; update(); }));
     document.getElementById(clearId).addEventListener('click', () => {
-      input.value = ''; page = 0; update(); input.focus();
+      input.value = ''; selects.forEach(([select]) => { select.value = ''; });
+      page = 0; update(); input.focus();
     });
     previous.addEventListener('click', () => { if (!previous.disabled) { page -= 1; update(true); } });
     next.addEventListener('click', () => { if (!next.disabled) { page += 1; update(true); } });
@@ -65,9 +74,11 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   disclosures.forEach(element => element.removeAttribute('open'));
   const rows = setupList('entity', '[data-filter-row]', 'report-filter', 'clear-filter',
-    'filter-count', 'no-match', 'shared entity rows', true);
+    'filter-count', 'no-match', 'shared entity rows', true,
+    [['entity-country', 'countries'], ['entity-category', 'categories']]);
   const suppliers = setupList('supplier', '[data-supplier-row]', 'supplier-filter',
-    'clear-supplier-filter', 'supplier-filter-count', 'supplier-no-match', 'supplier entries', false);
+    'clear-supplier-filter', 'supplier-filter-count', 'supplier-no-match', 'supplier entries', false,
+    [['supplier-country', 'countries'], ['supplier-evidence', 'evidence']]);
   // Print all evidence, then restore the reader's exact page, filter and disclosure state.
   let printState;
   window.addEventListener('beforeprint', () => {
@@ -237,18 +248,22 @@ Lines indicate upstream connections identified within the scope of this analysis
 {%- endmacro %}
 <div class="filter">
 <label for="supplier-filter"><strong>Filter supplier entries</strong></label><br>
-<input id="supplier-filter" type="search" placeholder="Company name, country or evidence" aria-describedby="supplier-filter-count">
-<button id="clear-supplier-filter" type="button">Clear supplier filter</button>
+<input id="supplier-filter" type="search" placeholder="Company name or any text in the evidence" aria-describedby="supplier-filter-count">
+<div class="filter-facets">
+<span class="facet"><label for="supplier-country">Country</label><select id="supplier-country" aria-controls="supplier-list"><option value="">All countries</option>{% for code, name in supplier_country_codes | country_options %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></span>
+<span class="facet"><label for="supplier-evidence">Evidence</label><select id="supplier-evidence" aria-controls="supplier-list"><option value="">All evidence states</option>{% for state, label in evidence_options %}<option value="{{ state }}">{{ label }}</option>{% endfor %}</select></span>
+</div>
+<button id="clear-supplier-filter" type="button">Clear filters</button>
 <p id="supplier-filter-count" role="status" aria-live="polite"></p>
 <div id="supplier-no-match" class="notice" hidden>
-<p>No supplier entry in this report matched that text. This report contains only the supplier input rows screened in this run — screening a new entity requires a new screening run.</p>
+<p>No supplier entry in this report matched the current search and filters. This report contains only the supplier input rows screened in this run — screening a new entity requires a new screening run.</p>
 <p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
 </div>
 </div>
 <div id="supplier-list" class="supplier-list">
 {% for row in supplier_rows %}
 {% set supplier = row.supplier %}
-<details id="{{ row.dom_id }}" data-supplier-row data-disclosure open>
+<details id="{{ row.dom_id }}" data-supplier-row data-disclosure open data-countries="{{ supplier.input_country or '' }}" data-evidence="{{ supplier.coverage_status or 'not_attempted' }}">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>{{ supplier.input_name }}</strong><small>Resolution: {{ supplier.resolution_status | replace('_', ' ') }} · Coverage: {{ coverage_labels.get(supplier.coverage_status or 'not_attempted') }}</small></span>
 <span class="supplier-exposure">{% if row.exposure_state == 'exposed' %}Connected upstream to <strong>{{ row.exposure_count }}</strong> of {{ row.exposure_denominator }} shared entities flagged for review<small>{{ row.path_stored_count }} supply chain path records shown</small>{% elif row.exposure_state == 'none_observed' %}No observed upstream connection to any of the {{ row.exposure_denominator }} shared entities flagged for review, within retrieved upstream evidence{% else %}{{ row.exposure_note }}{% endif %}</span>
@@ -361,11 +376,15 @@ Lines indicate upstream connections identified within the scope of this analysis
 <p class="section-note">Each count is the minimum observed in the evidence retrieved: an entity may appear upstream of more suppliers than this run found. Open an entity to read the evidence behind it.</p>
 <div class="filter">
 <label for="report-filter"><strong>Filter shared-entity findings</strong></label><br>
-<input id="report-filter" type="search" placeholder="Company name, country or risk factor" aria-describedby="filter-count">
-<button id="clear-filter" type="button">Clear filter</button>
+<input id="report-filter" type="search" placeholder="Company name, risk factor or any text in the evidence" aria-describedby="filter-count">
+<div class="filter-facets">
+<span class="facet"><label for="entity-country">Country</label><select id="entity-country" aria-controls="convergence-table"><option value="">All countries</option>{% for code, name in entity_country_codes | country_options %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></span>
+<span class="facet"><label for="entity-category">Risk category (critical or high factors)</label><select id="entity-category" aria-controls="convergence-table"><option value="">All risk categories</option>{% for category, label in category_options %}<option value="{{ category }}">{{ label }}</option>{% endfor %}</select></span>
+</div>
+<button id="clear-filter" type="button">Clear filters</button>
 <p id="filter-count" role="status" aria-live="polite"></p>
 <div id="no-match" class="notice" hidden>
-<p>No shared-entity finding in this report matched that text. Screening a new entity requires a new screening run.</p>
+<p>No shared-entity finding in this report matched the current search and filters. Screening a new entity requires a new screening run.</p>
 <p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
 </div>
 </div>
@@ -373,7 +392,7 @@ Lines indicate upstream connections identified within the scope of this analysis
 {% for group in ranked_groups %}
 <div data-entity-group>
 <h3>{{ group.portfolio | supplier_list_label(headline) }} — {{ group.nodes | length }} entities, most connected first</h3>
-{% for node in group.nodes %}<details data-filter-row class="entity-card" data-disclosure open>
+{% for node in group.nodes %}<details data-filter-row class="entity-card" data-disclosure open data-countries="{{ (node.countries or []) | join(' ') }}" data-categories="{{ node.severe_factors | risk_categories | join(' ') }}">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>{{ node.label or 'Name unavailable' }}</strong>{% if node.translated_label %}<small>{{ node.translated_label }}</small>{% endif %}</span>
 <span class="entity-countries">{{ node.countries | join(', ') if node.countries else 'none returned' }}<small>{{ node.country_count }} {{ 'country' if node.country_count == 1 else 'countries' }}</small></span>

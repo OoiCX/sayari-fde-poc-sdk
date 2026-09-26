@@ -83,7 +83,7 @@
         "authorization"
       ],
       "reason": "Published ontology labels and definitions contain regulatory authorization wording, not HTTP authentication headers. Reviewed source fields and the rendered text; configured credential checks remain mandatory. Methodology-rewrite re-review: the report was re-rendered from the unchanged findings.json, all eight authorization hits remain the NDAA Section 889 ontology labels, the rewritten section contains no marker text, and the detected category set is unchanged.",
-      "sha256": "9e1881e103dfa167e565e25efe9c84078f44395a298b311f59db5acf17b5e2be"
+      "sha256": "2fe04ee82102555c0f561d523306bbdedc1b6ccc2539de697b71d754454b2f83"
     },
     "ef9a2a1a087de80672ce5f4d3a32e3602394b689d008db98db8de8479b84f035": {
       "categories": [

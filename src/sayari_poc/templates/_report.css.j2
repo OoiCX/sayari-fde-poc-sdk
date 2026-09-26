@@ -205,8 +205,12 @@ svg text { fill: var(--text); font: 15px system-ui, sans-serif; }
 
 /* Controls */
 .filter { margin: var(--space-4) 0; padding: var(--space-3); background: var(--surface-sunken); border-radius: var(--radius); }
-input, button { max-width: 100%; font: inherit; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+input, button, select { max-width: 100%; font: inherit; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 input { width: min(100%, 35rem); color: var(--text); background: var(--surface-card); margin: var(--space-2) var(--space-2) var(--space-2) 0; }
+/* The dropdowns wrap onto their own lines on narrow screens rather than overflowing. */
+.filter-facets { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-3); }
+.facet { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; max-width: 100%; }
+select { width: min(100%, 20rem); color: var(--text); background: var(--surface-card); }
 input::placeholder { color: var(--text-muted); }
 button { cursor: pointer; color: var(--surface-card); background: var(--accent); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }

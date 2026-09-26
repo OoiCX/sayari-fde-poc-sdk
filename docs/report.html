@@ -213,8 +213,12 @@ svg text { fill: var(--text); font: 15px system-ui, sans-serif; }
 
 /* Controls */
 .filter { margin: var(--space-4) 0; padding: var(--space-3); background: var(--surface-sunken); border-radius: var(--radius); }
-input, button { max-width: 100%; font: inherit; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+input, button, select { max-width: 100%; font: inherit; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 input { width: min(100%, 35rem); color: var(--text); background: var(--surface-card); margin: var(--space-2) var(--space-2) var(--space-2) 0; }
+/* The dropdowns wrap onto their own lines on narrow screens rather than overflowing. */
+.filter-facets { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-3); }
+.facet { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; max-width: 100%; }
+select { width: min(100%, 20rem); color: var(--text); background: var(--surface-card); }
 input::placeholder { color: var(--text-muted); }
 button { cursor: pointer; color: var(--surface-card); background: var(--accent); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
@@ -270,19 +274,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const pageSize = 10;
   const groups = [...document.querySelectorAll('[data-entity-group]')];
   const disclosures = [...document.querySelectorAll('[data-disclosure]')];
-  const normalize = value => value.normalize('NFKC').toLocaleLowerCase();
-  const setupList = (prefix, selector, inputId, clearId, countId, emptyId, noun, grouped) => {
+  // Fold width, case and accents, so "ＩＮＰＵＴ" finds "input" and "Eberspacher" finds "Eberspächer".
+  const normalize = value =>
+    value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase();
+  const setupList = (prefix, selector, inputId, clearId, countId, emptyId, noun, grouped, facets) => {
     const rows = [...document.querySelectorAll(selector)];
     // Search all rendered evidence, including collapsed details and other pages.
     const searchable = rows.map(element => [element, normalize(element.textContent)]);
     const input = document.getElementById(inputId);
+    // Each dropdown matches one data attribute exactly, so a country code can't match a word.
+    const selects = facets.map(([id, key]) => [document.getElementById(id), key]);
     const pager = document.getElementById(`${prefix}-pagination`);
     const previous = document.getElementById(`${prefix}-previous`);
     const next = document.getElementById(`${prefix}-next`);
     let page = 0;
     const update = (moveFocus = false) => {
       const term = normalize(input.value).trim();
-      const matching = searchable.filter(([, content]) => content.includes(term)).map(([row]) => row);
+      const chosen = selects.filter(([select]) => select.value);
+      const matching = searchable.filter(([row, content]) => content.includes(term) &&
+        chosen.every(([select, key]) => (row.dataset[key] || '').split(' ').includes(select.value)))
+        .map(([row]) => row);
       const pages = Math.ceil(matching.length / pageSize);
       page = Math.max(0, Math.min(page, pages - 1));
       const start = page * pageSize;
@@ -297,7 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       document.getElementById(countId).textContent = `${matching.length} of ${rows.length} ${noun} match`;
-      document.getElementById(emptyId).hidden = !term || matching.length !== 0;
+      document.getElementById(emptyId).hidden = !(term || chosen.length) || matching.length !== 0;
       const range = matching.length ? `${start + 1}–${start + visible.length}` : '0';
       document.getElementById(`${prefix}-page-status`).textContent = `Showing ${range} of ${matching.length} ${noun}`;
       document.getElementById(`${prefix}-page-number`).textContent = `Page ${pages ? page + 1 : 0} of ${pages}`;
@@ -310,8 +321,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
     input.addEventListener('input', () => { page = 0; update(); });
+    selects.forEach(([select]) => select.addEventListener('change', () => { page = 0; update(); }));
     document.getElementById(clearId).addEventListener('click', () => {
-      input.value = ''; page = 0; update(); input.focus();
+      input.value = ''; selects.forEach(([select]) => { select.value = ''; });
+      page = 0; update(); input.focus();
     });
     previous.addEventListener('click', () => { if (!previous.disabled) { page -= 1; update(true); } });
     next.addEventListener('click', () => { if (!next.disabled) { page += 1; update(true); } });
@@ -321,9 +334,11 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   disclosures.forEach(element => element.removeAttribute('open'));
   const rows = setupList('entity', '[data-filter-row]', 'report-filter', 'clear-filter',
-    'filter-count', 'no-match', 'shared entity rows', true);
+    'filter-count', 'no-match', 'shared entity rows', true,
+    [['entity-country', 'countries'], ['entity-category', 'categories']]);
   const suppliers = setupList('supplier', '[data-supplier-row]', 'supplier-filter',
-    'clear-supplier-filter', 'supplier-filter-count', 'supplier-no-match', 'supplier entries', false);
+    'clear-supplier-filter', 'supplier-filter-count', 'supplier-no-match', 'supplier entries', false,
+    [['supplier-country', 'countries'], ['supplier-evidence', 'evidence']]);
   // Print all evidence, then restore the reader's exact page, filter and disclosure state.
   let printState;
   window.addEventListener('beforeprint', () => {
@@ -568,18 +583,22 @@ Lines indicate upstream connections identified within the scope of this analysis
 
 <div class="filter">
 <label for="supplier-filter"><strong>Filter supplier entries</strong></label><br>
-<input id="supplier-filter" type="search" placeholder="Company name, country or evidence" aria-describedby="supplier-filter-count">
-<button id="clear-supplier-filter" type="button">Clear supplier filter</button>
+<input id="supplier-filter" type="search" placeholder="Company name or any text in the evidence" aria-describedby="supplier-filter-count">
+<div class="filter-facets">
+<span class="facet"><label for="supplier-country">Country</label><select id="supplier-country" aria-controls="supplier-list"><option value="">All countries</option><option value="CAN">Canada (CAN)</option><option value="CHN">China (CHN)</option><option value="FRA">France (FRA)</option><option value="DEU">Germany (DEU)</option><option value="IND">India (IND)</option><option value="JPN">Japan (JPN)</option><option value="MEX">Mexico (MEX)</option><option value="KOR">South Korea (KOR)</option><option value="ESP">Spain (ESP)</option><option value="GBR">United Kingdom (GBR)</option><option value="USA">United States (USA)</option></select></span>
+<span class="facet"><label for="supplier-evidence">Evidence</label><select id="supplier-evidence" aria-controls="supplier-list"><option value="">All evidence states</option><option value="assessed">Fully assessed</option><option value="partial">Partially assessed</option><option value="no_data">No upstream data found</option><option value="not_attempted">Not assessed</option></select></span>
+</div>
+<button id="clear-supplier-filter" type="button">Clear filters</button>
 <p id="supplier-filter-count" role="status" aria-live="polite"></p>
 <div id="supplier-no-match" class="notice" hidden>
-<p>No supplier entry in this report matched that text. This report contains only the supplier input rows screened in this run — screening a new entity requires a new screening run.</p>
+<p>No supplier entry in this report matched the current search and filters. This report contains only the supplier input rows screened in this run — screening a new entity requires a new screening run.</p>
 <p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
 </div>
 </div>
 <div id="supplier-list" class="supplier-list">
 
 
-<details id="supplier-24" data-supplier-row data-disclosure open>
+<details id="supplier-24" data-supplier-row data-disclosure open data-countries="FRA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Plastic Omnium</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>32</strong> of 129 shared entities flagged for review<small>41 supply chain path records shown</small></span>
@@ -1739,7 +1758,7 @@ PLASTIC OMNIUM AUTO INERGY SERVICES
 </details>
 
 
-<details id="supplier-46" data-supplier-row data-disclosure open>
+<details id="supplier-46" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Visteon</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>30</strong> of 129 shared entities flagged for review<small>41 supply chain path records shown</small></span>
@@ -2947,7 +2966,7 @@ VISTEON CORP<small>Visteon Corporation</small>
 </details>
 
 
-<details id="supplier-23" data-supplier-row data-disclosure open>
+<details id="supplier-23" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Cummins</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>27</strong> of 129 shared entities flagged for review<small>41 supply chain path records shown</small></span>
@@ -4034,7 +4053,7 @@ CUMMINS SOUTHERN PLAINS LLC
 </details>
 
 
-<details id="supplier-32" data-supplier-row data-disclosure open>
+<details id="supplier-32" data-supplier-row data-disclosure open data-countries="KOR" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Hyundai Wia</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>20</strong> of 129 shared entities flagged for review<small>23 supply chain path records shown</small></span>
@@ -4879,7 +4898,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-20" data-supplier-row data-disclosure open>
+<details id="supplier-20" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>ThyssenKrupp Automotive</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>18</strong> of 129 shared entities flagged for review<small>24 supply chain path records shown</small></span>
@@ -5556,7 +5575,7 @@ THYSSENKRUPP AUTOMOTIVE SYSTEMS GMBH
 </details>
 
 
-<details id="supplier-28" data-supplier-row data-disclosure open>
+<details id="supplier-28" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Flex-N-Gate</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>18</strong> of 129 shared entities flagged for review<small>19 supply chain path records shown</small></span>
@@ -6261,7 +6280,7 @@ FLEX N GATE COVINGTON
 </details>
 
 
-<details id="supplier-38" data-supplier-row data-disclosure open>
+<details id="supplier-38" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>BorgWarner</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>18</strong> of 129 shared entities flagged for review<small>17 supply chain path records shown</small></span>
@@ -6942,7 +6961,7 @@ BORGWARNER THERMAL SYSTEMS, INC
 </details>
 
 
-<details id="supplier-14" data-supplier-row data-disclosure open>
+<details id="supplier-14" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Sumitomo Electric</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>16</strong> of 129 shared entities flagged for review<small>17 supply chain path records shown</small></span>
@@ -7652,7 +7671,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-27" data-supplier-row data-disclosure open>
+<details id="supplier-27" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>JTEKT</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>16</strong> of 129 shared entities flagged for review<small>28 supply chain path records shown</small></span>
@@ -8492,7 +8511,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-43" data-supplier-row data-disclosure open>
+<details id="supplier-43" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>DuPont</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>15</strong> of 129 shared entities flagged for review<small>22 supply chain path records shown</small></span>
@@ -9290,7 +9309,7 @@ E. I. du Pont de Nemours and Company<small>DuPont</small>
 </details>
 
 
-<details id="supplier-5" data-supplier-row data-disclosure open>
+<details id="supplier-5" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Aisin</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>13</strong> of 129 shared entities flagged for review<small>16 supply chain path records shown</small></span>
@@ -9858,7 +9877,7 @@ AISIN CORPORATION<small>Aisin Chemical Co., Ltd.</small>
 </details>
 
 
-<details id="supplier-34" data-supplier-row data-disclosure open>
+<details id="supplier-34" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Hitachi Astemo</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>13</strong> of 129 shared entities flagged for review<small>18 supply chain path records shown</small></span>
@@ -10455,7 +10474,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-16" data-supplier-row data-disclosure open>
+<details id="supplier-16" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Mahle</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>10</strong> of 129 shared entities flagged for review<small>14 supply chain path records shown</small></span>
@@ -10981,7 +11000,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-1" data-supplier-row data-disclosure open>
+<details id="supplier-1" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Bosch</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>9</strong> of 129 shared entities flagged for review<small>10 supply chain path records shown</small></span>
@@ -11427,7 +11446,7 @@ ROBERT BOSCH
 </details>
 
 
-<details id="supplier-33" data-supplier-row data-disclosure open>
+<details id="supplier-33" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>NTN</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>9</strong> of 129 shared entities flagged for review<small>10 supply chain path records shown</small></span>
@@ -11848,7 +11867,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-3" data-supplier-row data-disclosure open>
+<details id="supplier-3" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>ZF Friedrichshafen</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>8</strong> of 129 shared entities flagged for review<small>12 supply chain path records shown</small></span>
@@ -12298,7 +12317,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-13" data-supplier-row data-disclosure open>
+<details id="supplier-13" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Panasonic Automotive</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>6</strong> of 129 shared entities flagged for review<small>11 supply chain path records shown</small></span>
@@ -12688,7 +12707,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-7" data-supplier-row data-disclosure open>
+<details id="supplier-7" data-supplier-row data-disclosure open data-countries="KOR" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Hyundai Mobis</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>5</strong> of 129 shared entities flagged for review<small>14 supply chain path records shown</small></span>
@@ -13102,7 +13121,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-10" data-supplier-row data-disclosure open>
+<details id="supplier-10" data-supplier-row data-disclosure open data-countries="FRA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Valeo</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>5</strong> of 129 shared entities flagged for review<small>6 supply chain path records shown</small></span>
@@ -13376,7 +13395,7 @@ Valeo S.A.
 </details>
 
 
-<details id="supplier-30" data-supplier-row data-disclosure open>
+<details id="supplier-30" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Infineon Technologies</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>5</strong> of 129 shared entities flagged for review<small>17 supply chain path records shown</small></span>
@@ -13817,7 +13836,7 @@ INFINEON TECHNOLOGIES AG
 </details>
 
 
-<details id="supplier-11" data-supplier-row data-disclosure open>
+<details id="supplier-11" data-supplier-row data-disclosure open data-countries="USA" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Aptiv</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>4</strong> of 129 shared entities flagged for review<small>12 supply chain path records shown</small></span>
@@ -14111,7 +14130,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-17" data-supplier-row data-disclosure open>
+<details id="supplier-17" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Schaeffler</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>4</strong> of 129 shared entities flagged for review<small>15 supply chain path records shown</small></span>
@@ -14470,7 +14489,7 @@ SCHAEFFLER TECHNOLOGIES AG &amp; CO. KG<small>INA BETEILIGUNGSGESELLSCHAFT MIT B
 </details>
 
 
-<details id="supplier-42" data-supplier-row data-disclosure open>
+<details id="supplier-42" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Toyoda Gosei</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>4</strong> of 129 shared entities flagged for review<small>7 supply chain path records shown</small></span>
@@ -14783,7 +14802,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-15" data-supplier-row data-disclosure open>
+<details id="supplier-15" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="assessed">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>BASF</strong><small>Resolution: resolved · Coverage: Fully assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>3</strong> of 129 shared entities flagged for review<small>3 supply chain path records shown</small></span>
@@ -15081,7 +15100,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-19" data-supplier-row data-disclosure open>
+<details id="supplier-19" data-supplier-row data-disclosure open data-countries="USA" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Adient</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>3</strong> of 129 shared entities flagged for review<small>10 supply chain path records shown</small></span>
@@ -15389,7 +15408,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-35" data-supplier-row data-disclosure open>
+<details id="supplier-35" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Draexlmaier</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>3</strong> of 129 shared entities flagged for review<small>8 supply chain path records shown</small></span>
@@ -15642,7 +15661,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-47" data-supplier-row data-disclosure open>
+<details id="supplier-47" data-supplier-row data-disclosure open data-countries="USA" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Meritor</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>3</strong> of 129 shared entities flagged for review<small>9 supply chain path records shown</small></span>
@@ -15931,7 +15950,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-12" data-supplier-row data-disclosure open>
+<details id="supplier-12" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Yazaki</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>1</strong> of 129 shared entities flagged for review<small>4 supply chain path records shown</small></span>
@@ -16129,7 +16148,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-22" data-supplier-row data-disclosure open>
+<details id="supplier-22" data-supplier-row data-disclosure open data-countries="USA" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Tenneco</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>1</strong> of 129 shared entities flagged for review<small>2 supply chain path records shown</small></span>
@@ -16333,7 +16352,7 @@ TENNECO INC<small>Tenneco Motors Co., Ltd.</small>
 </details>
 
 
-<details id="supplier-29" data-supplier-row data-disclosure open>
+<details id="supplier-29" data-supplier-row data-disclosure open data-countries="MEX" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Nemak</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>1</strong> of 129 shared entities flagged for review<small>3 supply chain path records shown</small></span>
@@ -16549,7 +16568,7 @@ NEMAK MEXICO SA
 </details>
 
 
-<details id="supplier-36" data-supplier-row data-disclosure open>
+<details id="supplier-36" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Marelli</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">Connected upstream to <strong>1</strong> of 129 shared entities flagged for review<small>5 supply chain path records shown</small></span>
@@ -16812,7 +16831,7 @@ MARELLI TOLUCA MEXICO S DE RL DE CV
 </details>
 
 
-<details id="supplier-2" data-supplier-row data-disclosure open>
+<details id="supplier-2" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="not_attempted">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Denso</strong><small>Resolution: no match · Coverage: Not assessed</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval was not attempted for this supplier.</span>
@@ -16867,7 +16886,7 @@ MARELLI TOLUCA MEXICO S DE RL DE CV
 </details>
 
 
-<details id="supplier-4" data-supplier-row data-disclosure open>
+<details id="supplier-4" data-supplier-row data-disclosure open data-countries="CAN" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Magna International</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -16954,7 +16973,7 @@ MAGNA INTERNATIONAL INC.
 </details>
 
 
-<details id="supplier-6" data-supplier-row data-disclosure open>
+<details id="supplier-6" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Continental</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17066,7 +17085,7 @@ CONTINENTAL AG<small>Continental AG</small>
 </details>
 
 
-<details id="supplier-8" data-supplier-row data-disclosure open>
+<details id="supplier-8" data-supplier-row data-disclosure open data-countries="USA" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Lear</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17143,7 +17162,7 @@ LEAR ESD HQ
 </details>
 
 
-<details id="supplier-9" data-supplier-row data-disclosure open>
+<details id="supplier-9" data-supplier-row data-disclosure open data-countries="FRA" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Faurecia</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17260,7 +17279,7 @@ Forvia SE<small>Faurecia Investment Corporation</small>
 </details>
 
 
-<details id="supplier-18" data-supplier-row data-disclosure open>
+<details id="supplier-18" data-supplier-row data-disclosure open data-countries="CHN" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Yanfeng</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17369,7 +17388,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </details>
 
 
-<details id="supplier-21" data-supplier-row data-disclosure open>
+<details id="supplier-21" data-supplier-row data-disclosure open data-countries="ESP" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Gestamp</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17451,7 +17470,7 @@ GESTAMP 2017 SL
 </details>
 
 
-<details id="supplier-25" data-supplier-row data-disclosure open>
+<details id="supplier-25" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Benteler Automotive</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17553,7 +17572,7 @@ GESTAMP 2017 SL
 </details>
 
 
-<details id="supplier-26" data-supplier-row data-disclosure open>
+<details id="supplier-26" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="partial">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Brose</strong><small>Resolution: resolved · Coverage: Partially assessed</small></span>
 <span class="supplier-exposure">No observed upstream connection to any of the 129 shared entities flagged for review, within retrieved upstream evidence</span>
@@ -17716,7 +17735,7 @@ BROSE MEXICO SA DE CV
 </details>
 
 
-<details id="supplier-31" data-supplier-row data-disclosure open>
+<details id="supplier-31" data-supplier-row data-disclosure open data-countries="USA" data-evidence="not_attempted">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Dana</strong><small>Resolution: no match · Coverage: Not assessed</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval was not attempted for this supplier.</span>
@@ -17771,7 +17790,7 @@ BROSE MEXICO SA DE CV
 </details>
 
 
-<details id="supplier-37" data-supplier-row data-disclosure open>
+<details id="supplier-37" data-supplier-row data-disclosure open data-countries="ESP" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Grupo Antolin</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -17858,7 +17877,7 @@ LEAR CORPORATION ARA SL
 </details>
 
 
-<details id="supplier-39" data-supplier-row data-disclosure open>
+<details id="supplier-39" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="not_attempted">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>HELLA</strong><small>Resolution: weak · Coverage: Not assessed</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval was not attempted for this supplier.</span>
@@ -17919,7 +17938,7 @@ LEAR CORPORATION ARA SL
 </details>
 
 
-<details id="supplier-40" data-supplier-row data-disclosure open>
+<details id="supplier-40" data-supplier-row data-disclosure open data-countries="IND" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Samvardhana Motherson</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18016,7 +18035,7 @@ Samvardhana Motherson International Ltd.
 </details>
 
 
-<details id="supplier-41" data-supplier-row data-disclosure open>
+<details id="supplier-41" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Webasto</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18103,7 +18122,7 @@ Webasto Mechatronics GmbH
 </details>
 
 
-<details id="supplier-44" data-supplier-row data-disclosure open>
+<details id="supplier-44" data-supplier-row data-disclosure open data-countries="GBR" data-evidence="not_attempted">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>GKN Automotive</strong><small>Resolution: weak · Coverage: Not assessed</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval was not attempted for this supplier.</span>
@@ -18164,7 +18183,7 @@ Webasto Mechatronics GmbH
 </details>
 
 
-<details id="supplier-45" data-supplier-row data-disclosure open>
+<details id="supplier-45" data-supplier-row data-disclosure open data-countries="DEU" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Eberspächer</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18246,7 +18265,7 @@ Eberspächer Insurance Services GmbH<small>CATEM MANAGEMENT GMBH</small>
 </details>
 
 
-<details id="supplier-48" data-supplier-row data-disclosure open>
+<details id="supplier-48" data-supplier-row data-disclosure open data-countries="JPN" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>NSK</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18333,7 +18352,7 @@ NSK LTD.
 </details>
 
 
-<details id="supplier-49" data-supplier-row data-disclosure open>
+<details id="supplier-49" data-supplier-row data-disclosure open data-countries="USA" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>American Axle &amp; Manufacturing</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18425,7 +18444,7 @@ Dauch Corporation
 </details>
 
 
-<details id="supplier-50" data-supplier-row data-disclosure open>
+<details id="supplier-50" data-supplier-row data-disclosure open data-countries="KOR" data-evidence="no_data">
 <summary><span class="supplier-summary">
 <span class="supplier-identity"><strong>Mando</strong><small>Resolution: resolved · Coverage: No upstream data found</small></span>
 <span class="supplier-exposure">Not assessed — upstream retrieval returned no evidence for this supplier.</span>
@@ -18551,11 +18570,15 @@ Mando Corporation<small>machete</small>
 <p class="section-note">Each count is the minimum observed in the evidence retrieved: an entity may appear upstream of more suppliers than this run found. Open an entity to read the evidence behind it.</p>
 <div class="filter">
 <label for="report-filter"><strong>Filter shared-entity findings</strong></label><br>
-<input id="report-filter" type="search" placeholder="Company name, country or risk factor" aria-describedby="filter-count">
-<button id="clear-filter" type="button">Clear filter</button>
+<input id="report-filter" type="search" placeholder="Company name, risk factor or any text in the evidence" aria-describedby="filter-count">
+<div class="filter-facets">
+<span class="facet"><label for="entity-country">Country</label><select id="entity-country" aria-controls="convergence-table"><option value="">All countries</option><option value="ARM">Armenia (ARM)</option><option value="AUS">Australia (AUS)</option><option value="AUT">Austria (AUT)</option><option value="BEL">Belgium (BEL)</option><option value="BRA">Brazil (BRA)</option><option value="BGR">Bulgaria (BGR)</option><option value="CAN">Canada (CAN)</option><option value="CHN">China (CHN)</option><option value="CZE">Czechia (CZE)</option><option value="DNK">Denmark (DNK)</option><option value="ECU">Ecuador (ECU)</option><option value="SLV">El Salvador (SLV)</option><option value="FIN">Finland (FIN)</option><option value="FRA">France (FRA)</option><option value="DEU">Germany (DEU)</option><option value="HKG">Hong Kong (HKG)</option><option value="HUN">Hungary (HUN)</option><option value="IND">India (IND)</option><option value="IDN">Indonesia (IDN)</option><option value="ITA">Italy (ITA)</option><option value="JPN">Japan (JPN)</option><option value="LAO">Laos (LAO)</option><option value="LTU">Lithuania (LTU)</option><option value="LUX">Luxembourg (LUX)</option><option value="MYS">Malaysia (MYS)</option><option value="MLT">Malta (MLT)</option><option value="MEX">Mexico (MEX)</option><option value="NLD">Netherlands (NLD)</option><option value="NIU">Niue (NIU)</option><option value="PRK">North Korea (PRK)</option><option value="PAK">Pakistan (PAK)</option><option value="PHL">Philippines (PHL)</option><option value="POL">Poland (POL)</option><option value="PRT">Portugal (PRT)</option><option value="ROU">Romania (ROU)</option><option value="RUS">Russian Federation (RUS)</option><option value="SAU">Saudi Arabia (SAU)</option><option value="SGP">Singapore (SGP)</option><option value="SVK">Slovakia (SVK)</option><option value="KOR">South Korea (KOR)</option><option value="ESP">Spain (ESP)</option><option value="SWE">Sweden (SWE)</option><option value="CHE">Switzerland (CHE)</option><option value="TWN">Taiwan (TWN)</option><option value="THA">Thailand (THA)</option><option value="TUR">Türkiye (TUR)</option><option value="UKR">Ukraine (UKR)</option><option value="GBR">United Kingdom (GBR)</option><option value="USA">United States (USA)</option><option value="VNM">Vietnam (VNM)</option><option value="VIR">Virgin Islands, U.S. (VIR)</option></select></span>
+<span class="facet"><label for="entity-category">Risk category (critical or high factors)</label><select id="entity-category" aria-controls="convergence-table"><option value="">All risk categories</option><option value="export_controls">Export controls</option><option value="political_exposure">Political exposure</option><option value="regulatory_action">Regulatory action</option><option value="sanctions">Sanctions</option></select></span>
+</div>
+<button id="clear-filter" type="button">Clear filters</button>
 <p id="filter-count" role="status" aria-live="polite"></p>
 <div id="no-match" class="notice" hidden>
-<p>No shared-entity finding in this report matched that text. Screening a new entity requires a new screening run.</p>
+<p>No shared-entity finding in this report matched the current search and filters. Screening a new entity requires a new screening run.</p>
 <p>Add the entity to the supplier workbook and request a new screening run. This filter searches only the evidence already in this report.</p>
 </div>
 </div>
@@ -18563,7 +18586,7 @@ Mando Corporation<small>machete</small>
 
 <div data-entity-group>
 <h3>Screened supplier list — 129 entities, most connected first</h3>
-<details data-filter-row class="entity-card" data-disclosure open>
+<details data-filter-row class="entity-card" data-disclosure open data-countries="CHN CZE DEU JPN MYS PHL SGP TWN USA" data-categories="export_controls sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ALLEGRO MICROSYSTEMS PHILIPPINES INC</strong></span>
 <span class="entity-countries">CHN, CZE, DEU, JPN, MYS, PHL, SGP, TWN, USA<small>9 countries</small></span>
@@ -18667,7 +18690,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN KOR MYS" data-categories="export_controls political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CARSEM (M) SDN BHD</strong></span>
 <span class="entity-countries">CHN, KOR, MYS<small>3 countries</small></span>
@@ -18754,7 +18777,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="MYS SGP VNM" data-categories="export_controls political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SAMTEC ASIA PACIFIC (M) SDN BHD</strong></span>
 <span class="entity-countries">MYS, SGP, VNM<small>3 countries</small></span>
@@ -18846,7 +18869,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CAN CHN FIN FRA IND JPN KOR USA" data-categories="political_exposure regulatory_action sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TUBE INVESTMENTS OF INDIA LIMITED</strong></span>
 <span class="entity-countries">CAN, CHN, FIN, FRA, IND, JPN, KOR, USA<small>8 countries</small></span>
@@ -18935,7 +18958,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU HKG JPN KOR MYS POL THA VNM" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>Công ty TNHH Keyence Việt Nam</strong></span>
 <span class="entity-countries">CHN, DEU, HKG, JPN, KOR, MYS, POL, THA, VNM<small>9 countries</small></span>
@@ -19021,7 +19044,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN HKG MEX MYS NLD PHL SGP THA TWN USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MOLEX INTEGRATED PRODUCTS PHILIPPINES INC</strong></span>
 <span class="entity-countries">CHN, HKG, MEX, MYS, NLD, PHL, SGP, THA, TWN, USA<small>10 countries</small></span>
@@ -19102,7 +19125,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>Bayrak Lastik Sanayi VE Ticaret Anonim Sirketi</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -19179,7 +19202,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VALEO OTOMOTİV SANAYİ VE TİCARET ANONİM ŞİRKETİ</strong></span>
 <span class="entity-countries">DEU, TUR<small>2 countries</small></span>
@@ -19256,7 +19279,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IDN SGP" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PCI ELEKTRONIK INTERNASIONAL</strong></span>
 <span class="entity-countries">IDN, SGP<small>2 countries</small></span>
@@ -19355,7 +19378,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS IND JPN USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SONA BLW PRECISION FORGINGS LIMITED</strong></span>
 <span class="entity-countries">AUS, IND, JPN, USA<small>4 countries</small></span>
@@ -19404,7 +19427,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT DEU IDN JPN TUR" data-categories="export_controls sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PT TDK ELECTRONICS INDONESIA</strong></span>
 <span class="entity-countries">AUT, DEU, IDN, JPN, TUR<small>5 countries</small></span>
@@ -19447,7 +19470,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IND JPN KOR MYS SGP" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>UNISEM (M) BERHAD</strong></span>
 <span class="entity-countries">CHN, IND, JPN, KOR, MYS, SGP<small>6 countries</small></span>
@@ -19546,7 +19569,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TRISTONE FLOWTECH İSTANBUL OTOMOTİV SANAYİ VE TİCARET LİMİTED ŞİRKETİ</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -19579,7 +19602,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IDN MYS" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PANASONIC GOBEL ENERGY INDONESIA</strong></span>
 <span class="entity-countries">IDN, MYS<small>2 countries</small></span>
@@ -19653,7 +19676,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="KOR MEX USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>FEDERAL MOGUL SA DE CV</strong></span>
 <span class="entity-countries">KOR, MEX, USA<small>3 countries</small></span>
@@ -19686,7 +19709,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="GBR IND USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>RICO AUTO INDUSTRIES LIMITED</strong></span>
 <span class="entity-countries">GBR, IND, USA<small>3 countries</small></span>
@@ -19730,7 +19753,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND JPN KOR" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TOYOTA TSUSHO INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND, JPN, KOR<small>3 countries</small></span>
@@ -19799,7 +19822,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="KOR MEX USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>THYSSENKRUPP PRESTA DE MEXICO SA DE CV</strong></span>
 <span class="entity-countries">KOR, MEX, USA<small>3 countries</small></span>
@@ -19858,7 +19881,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IND USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>JUBILANT INGREVIA LIMITED</strong></span>
 <span class="entity-countries">CHN, IND, USA<small>3 countries</small></span>
@@ -19925,7 +19948,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND KOR TUR USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TE CONNECTIVITY INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND, KOR, TUR, USA<small>4 countries</small></span>
@@ -20016,7 +20039,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU MEX USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ELRING KLINGER MEXICO SA DE CV</strong></span>
 <span class="entity-countries">CHN, DEU, MEX, USA<small>4 countries</small></span>
@@ -20044,7 +20067,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHE IND KOR ROU USA" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MAINI PRECISION PRODUCTS LIMITED</strong></span>
 <span class="entity-countries">CHE, IND, KOR, ROU, USA<small>5 countries</small></span>
@@ -20131,7 +20154,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU IND MLT TUR" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TDK INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">CHN, DEU, IND, MLT, TUR<small>5 countries</small></span>
@@ -20200,7 +20223,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IDN IND KOR SAU SWE" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SANSERA ENGINEERING LIMITED</strong></span>
 <span class="entity-countries">IDN, IND, KOR, SAU, SWE<small>5 countries</small></span>
@@ -20319,7 +20342,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU GBR IND USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SHRIRAM PISTONS &amp; RINGS LIMITED</strong></span>
 <span class="entity-countries">CHN, DEU, GBR, IND, USA<small>5 countries</small></span>
@@ -20366,7 +20389,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN MYS SGP USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MOLEX (MALAYSIA) SDN BHD</strong></span>
 <span class="entity-countries">CHN, JPN, MYS, SGP, USA<small>5 countries</small></span>
@@ -20457,7 +20480,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CZE DEU MEX POL USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>GRAMMER AUTOMOTIVE PUEBLA SA DE CV</strong></span>
 <span class="entity-countries">CZE, DEU, MEX, POL, USA<small>5 countries</small></span>
@@ -20511,7 +20534,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU JPN MEX TUR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>FREUDENBERG-NOK SEALING TECHNOLOGIES DE MEXICO SA DE CV</strong></span>
 <span class="entity-countries">DEU, JPN, MEX, TUR, USA<small>5 countries</small></span>
@@ -20539,7 +20562,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BRA CHN DEU HKG MYS USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>INFASTECH (MALAYSIA) SDN BHD</strong></span>
 <span class="entity-countries">BRA, CHN, DEU, HKG, MYS, USA<small>6 countries</small></span>
@@ -20596,7 +20619,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN ECU GBR JPN KOR MYS SGP" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CELESTICA ELECTRONICS (M) SDN BHD</strong></span>
 <span class="entity-countries">CHN, ECU, GBR, JPN, KOR, MYS, SGP<small>7 countries</small></span>
@@ -20663,7 +20686,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU DNK ESP LUX MEX USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ADIENT MEXICO AUTOMOTRIZ S DE RL DE CV</strong></span>
 <span class="entity-countries">CHN, DEU, DNK, ESP, LUX, MEX, USA<small>7 countries</small></span>
@@ -20717,7 +20740,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN HKG JPN SGP TUR TWN USA" data-categories="export_controls political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ICAPE HK COMPANY LTD</strong></span>
 <span class="entity-countries">CHN, HKG, JPN, SGP, TUR, TWN, USA<small>7 countries</small></span>
@@ -20834,7 +20857,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IND ITA KOR MYS NLD POL ROU" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>RANE (MADRAS) LIMITED</strong></span>
 <span class="entity-countries">CHN, IND, ITA, KOR, MYS, NLD, POL, ROU<small>8 countries</small></span>
@@ -20867,7 +20890,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU HKG IND JPN KOR MEX NLD TUR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>APTIV CONNECTION SYSTEMS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">DEU, HKG, IND, JPN, KOR, MEX, NLD, TUR, USA<small>9 countries</small></span>
@@ -20924,7 +20947,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHE HKG JPN NIU SGP THA TWN VIR VNM" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>Công Ty TNHH Khuôn Đúc Tsukuba Việt Nam</strong></span>
 <span class="entity-countries">CHE, HKG, JPN, NIU, SGP, THA, TWN, VIR, VNM<small>9 countries</small></span>
@@ -20993,7 +21016,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN KOR PHL SGP TWN USA VIR VNM" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CôNG TY TNHH MộT THàNH VIêN VIễN THôNG QUốC Tế FPT</strong></span>
 <span class="entity-countries">CHN, JPN, KOR, PHL, SGP, TWN, USA, VIR, VNM<small>9 countries</small></span>
@@ -21065,7 +21088,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS CHN HKG JPN KOR MEX MYS ROU SGP USA" data-categories="export_controls regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PLEXUS MANUFACTURING SDN BHD</strong></span>
 <span class="entity-countries">AUS, CHN, HKG, JPN, KOR, MEX, MYS, ROU, SGP, USA<small>10 countries</small></span>
@@ -21149,7 +21172,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS CAN CHN DEU HKG IND JPN KOR MEX TUR" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>XIAMEN HONGFA ELECTROACOUSTIC COLTD</strong></span>
 <span class="entity-countries">AUS, CAN, CHN, DEU, HKG, IND, JPN, KOR, MEX, TUR<small>10 countries</small></span>
@@ -21233,7 +21256,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BRA CAN JPN KOR MEX NLD PHL SGP THA USA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>STMICROELECTRONICS INC</strong></span>
 <span class="entity-countries">BRA, CAN, JPN, KOR, MEX, NLD, PHL, SGP, THA, USA<small>10 countries</small></span>
@@ -21337,7 +21360,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT CHN DEU ESP HUN IND KOR ROU TUR USA" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SCHAEFFLER INDIA LIMITED</strong></span>
 <span class="entity-countries">AUT, CHN, DEU, ESP, HUN, IND, KOR, ROU, TUR, USA<small>10 countries</small></span>
@@ -21389,7 +21412,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SANJEEV AUTO PARTS MANUFACTURERS PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21436,7 +21459,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TEXSPIN BEARINGS LTD</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21505,7 +21528,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ELECTRICFIL UNIFIL OTOMOTIV SANAYI VE TICARET ANONIM SIRKETI</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -21538,7 +21561,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CONTINENTAL DEVICE INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21600,7 +21623,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>BOSCH AUTOMOTIVE ELECTRONICS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21672,7 +21695,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ORAU ORHAN OTOMOTİV KONTROL SİSTEMLERİ SANAYİİ ANONİM ŞİRKETİ</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -21719,7 +21742,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ROCKMAN INDUSTRIES LIMITED</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21766,7 +21789,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="MYS" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PANASONIC AUTOMOTIVE SYSTEMS MALAYSIA SDN BHD</strong></span>
 <span class="entity-countries">MYS<small>1 country</small></span>
@@ -21823,7 +21846,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>BEYÇELİK GESTAMP OTOMOTİV SANAYİ ANONİM ŞİRKETİ</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -21856,7 +21879,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VİBRACOUSTİC ÇERKEZKÖY OTO PARÇALARI DIŞ TİCARET ANONİM ŞİRKETİ</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -21889,7 +21912,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PLANSEE INDIA HIGH PERFORMANCE MATERIALS PRIVATE L</strong></span>
 <span class="entity-countries">IND<small>1 country</small></span>
@@ -21966,7 +21989,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="TUR" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ERKUNT SANAYİ ANONİMŞİRKETİ</strong></span>
 <span class="entity-countries">TUR<small>1 country</small></span>
@@ -21994,7 +22017,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND USA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SOURCE TECHNOLOGI</strong></span>
 <span class="entity-countries">IND, USA<small>2 countries</small></span>
@@ -22041,7 +22064,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND USA" data-categories="export_controls regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VISTEON ELECTRONICS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND, USA<small>2 countries</small></span>
@@ -22118,7 +22141,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="LTU TUR" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MARELLI MAKO ELEKTRIK SANAYI VE TICARET ANONIM ŞIRKETI</strong></span>
 <span class="entity-countries">LTU, TUR<small>2 countries</small></span>
@@ -22170,7 +22193,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHE MYS" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>WINNSON MARKETING SDN BHD</strong></span>
 <span class="entity-countries">CHE, MYS<small>2 countries</small></span>
@@ -22217,7 +22240,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU MYS" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>JJ LAPP (M) SDN BHD</strong></span>
 <span class="entity-countries">DEU, MYS<small>2 countries</small></span>
@@ -22294,7 +22317,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND SVK" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VISHAY COMPONENTS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND, SVK<small>2 countries</small></span>
@@ -22383,7 +22406,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN MYS" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>HERAEUS MATERIALS MALAYSIA SDN BHD</strong></span>
 <span class="entity-countries">CHN, MYS<small>2 countries</small></span>
@@ -22435,7 +22458,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="JPN PHL" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>FIRST SUMIDEN CIRCUITS INC</strong></span>
 <span class="entity-countries">JPN, PHL<small>2 countries</small></span>
@@ -22489,7 +22512,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="JPN THA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>豊田合成タイランド㈱</strong></span>
 <span class="entity-countries">JPN, THA<small>2 countries</small></span>
@@ -22558,7 +22581,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TYCO ELECTRONICS (SHENZHEN) CO LTD</strong></span>
 <span class="entity-countries">CHN, JPN<small>2 countries</small></span>
@@ -22610,7 +22633,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="JPN THA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NIFCO (THAILAND) CO LTD</strong></span>
 <span class="entity-countries">JPN, THA<small>2 countries</small></span>
@@ -22654,7 +22677,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BRA USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NTN ROLAMENTOS DO BRASIL LTDA</strong></span>
 <span class="entity-countries">BRA, USA<small>2 countries</small></span>
@@ -22687,7 +22710,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>JTEKT BEARINGS (WUXI) CO LTD</strong></span>
 <span class="entity-countries">CHN, JPN, USA<small>3 countries</small></span>
@@ -22724,7 +22747,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IND USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>DEEPAK PHENOLICS LIMITED</strong></span>
 <span class="entity-countries">CHN, IND, USA<small>3 countries</small></span>
@@ -22761,7 +22784,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU TUR USA" data-categories="export_controls political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TÜRKİYENİN OTOMOBİLİ GİRİŞİM GRUBU SANAYİ VE TİCARET ANONİM ŞİRKETİ</strong></span>
 <span class="entity-countries">DEU, TUR, USA<small>3 countries</small></span>
@@ -22888,7 +22911,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU SAU USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MAADEN ALUMINIUM COMPANY</strong></span>
 <span class="entity-countries">DEU, SAU, USA<small>3 countries</small></span>
@@ -22931,7 +22954,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN MYS VNM" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PANASONIC AVC NETWORK KUALA LUMPUR</strong></span>
 <span class="entity-countries">CHN, MYS, VNM<small>3 countries</small></span>
@@ -22998,7 +23021,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU GBR IND" data-categories="regulatory_action sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>KSPG AUTOMOTIVE INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">DEU, GBR, IND<small>3 countries</small></span>
@@ -23057,7 +23080,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="FRA IND JPN" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TITAN ENGINEERING &amp; AUTOMATION LIMITED</strong></span>
 <span class="entity-countries">FRA, IND, JPN<small>3 countries</small></span>
@@ -23146,7 +23169,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="ARM IND TUR" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>E-CON SYSTEMS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">ARM, IND, TUR<small>3 countries</small></span>
@@ -23230,7 +23253,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="HKG IND USA" data-categories="export_controls political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>FCI OEN CONNECTORS LIMITED</strong></span>
 <span class="entity-countries">HKG, IND, USA<small>3 countries</small></span>
@@ -23327,7 +23350,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN HKG JPN SGP" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SUNTAK TECHNOLOGY LIMITED</strong></span>
 <span class="entity-countries">CHN, HKG, JPN, SGP<small>4 countries</small></span>
@@ -23389,7 +23412,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU GBR NLD TUR" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NORMA UK LTD</strong></span>
 <span class="entity-countries">DEU, GBR, NLD, TUR<small>4 countries</small></span>
@@ -23417,7 +23440,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN KOR SGP" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SUGINO MACHINE SINGAPORE PTE LTD</strong></span>
 <span class="entity-countries">CHN, JPN, KOR, SGP<small>4 countries</small></span>
@@ -23450,7 +23473,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IDN JPN THA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>INDONESIA CHEMI-CON</strong></span>
 <span class="entity-countries">CHN, IDN, JPN, THA<small>4 countries</small></span>
@@ -23483,7 +23506,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN KOR THA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TOYOTA TSUSHO (SHANGHAI) CO LTD</strong></span>
 <span class="entity-countries">CHN, JPN, KOR, THA<small>4 countries</small></span>
@@ -23552,7 +23575,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="ESP IND JPN USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>IMPERIAL AUTO INDUSTRIES LIMITED</strong></span>
 <span class="entity-countries">ESP, IND, JPN, USA<small>4 countries</small></span>
@@ -23614,7 +23637,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="HKG IND MYS USA" data-categories="export_controls regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ARROW ELECTRONICS INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">HKG, IND, MYS, USA<small>4 countries</small></span>
@@ -23657,7 +23680,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU MYS SGP" data-categories="export_controls sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PRESS METAL BINTULU SDN BHD</strong></span>
 <span class="entity-countries">CHN, DEU, MYS, SGP<small>4 countries</small></span>
@@ -23704,7 +23727,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IND KOR MYS USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>RAYCHEM-RPG PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IND, KOR, MYS, USA<small>4 countries</small></span>
@@ -23788,7 +23811,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS DEU KOR TUR USA" data-categories="regulatory_action sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PIERBURG GMBH</strong></span>
 <span class="entity-countries">AUS, DEU, KOR, TUR, USA<small>5 countries</small></span>
@@ -23855,7 +23878,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU ESP FRA IND KOR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>RENAULT INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">DEU, ESP, FRA, IND, KOR<small>5 countries</small></span>
@@ -23934,7 +23957,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN IDN JPN KOR USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ASTRA DAIHATSU MOTOR</strong></span>
 <span class="entity-countries">CHN, IDN, JPN, KOR, USA<small>5 countries</small></span>
@@ -24003,7 +24026,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN MYS SGP USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>UNISTEEL TECHNOLOGY LIMITED</strong></span>
 <span class="entity-countries">CHN, JPN, MYS, SGP, USA<small>5 countries</small></span>
@@ -24060,7 +24083,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU GBR IND JPN USA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>BOSCH GLOBAL SOFTWARE TECHNOLOGIES PRIVATE LIMITED</strong></span>
 <span class="entity-countries">DEU, GBR, IND, JPN, USA<small>5 countries</small></span>
@@ -24134,7 +24157,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN HKG IDN IND JPN" data-categories="export_controls sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>YAZAKI INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">CHN, HKG, IDN, IND, JPN<small>5 countries</small></span>
@@ -24191,7 +24214,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS CHN ECU IND USA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VARROC ENGINEERING LIMITED</strong></span>
 <span class="entity-countries">AUS, CHN, ECU, IND, USA<small>5 countries</small></span>
@@ -24270,7 +24293,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU ITA JPN KOR MYS" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>FESTO SDN BHD</strong></span>
 <span class="entity-countries">DEU, ITA, JPN, KOR, MYS<small>5 countries</small></span>
@@ -24327,7 +24350,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU IND JPN KOR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>주식회사 화승알앤에이</strong></span>
 <span class="entity-countries">CHN, DEU, IND, JPN, KOR, USA<small>6 countries</small></span>
@@ -24391,7 +24414,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN ESP JPN KOR MEX USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>LUCID USA INC</strong></span>
 <span class="entity-countries">CHN, ESP, JPN, KOR, MEX, USA<small>6 countries</small></span>
@@ -24448,7 +24471,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN JPN KOR SGP USA VNM" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CôNG TY Cổ PHầN TRUNG TâM GIA CôNG POSCO VIệT NAM</strong></span>
 <span class="entity-countries">CHN, JPN, KOR, SGP, USA, VNM<small>6 countries</small></span>
@@ -24497,7 +24520,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU NLD POL TWN UKR" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>ТОВ ЕЛІТ УКРАЇНА</strong></span>
 <span class="entity-countries">CHN, DEU, NLD, POL, TWN, UKR<small>6 countries</small></span>
@@ -24525,7 +24548,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL DEU HKG JPN KOR SGP" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NICHICON CORPORATION</strong></span>
 <span class="entity-countries">BEL, DEU, HKG, JPN, KOR, SGP<small>6 countries</small></span>
@@ -24577,7 +24600,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU ITA LUX MEX SWE USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SKF DE MEXICO SA DE CV</strong></span>
 <span class="entity-countries">DEU, ITA, LUX, MEX, SWE, USA<small>6 countries</small></span>
@@ -24619,7 +24642,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CZE DEU LTU POL TUR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NORMA CZECH SRO</strong></span>
 <span class="entity-countries">CZE, DEU, LTU, POL, TUR, USA<small>6 countries</small></span>
@@ -24652,7 +24675,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU FRA IDN JPN KOR SGP" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PT INFINEON TECHNOLOGIES BATAM</strong></span>
 <span class="entity-countries">DEU, FRA, IDN, JPN, KOR, SGP<small>6 countries</small></span>
@@ -24721,7 +24744,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="DEU JPN MEX NLD SLV USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>BORGWARNER TURBO AND EMISSIONS SYSTEMS DE MEXICO SA DE CV</strong></span>
 <span class="entity-countries">DEU, JPN, MEX, NLD, SLV, USA<small>6 countries</small></span>
@@ -24754,7 +24777,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHE CHN DEU IND TUR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CIE AUTOMOTIVE INDIA LIMITED</strong></span>
 <span class="entity-countries">CHE, CHN, DEU, IND, TUR, USA<small>6 countries</small></span>
@@ -24791,7 +24814,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL CHN DEU JPN MEX USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>NORTH AMERICAN LIGHTING MEXICO SA DE CV</strong></span>
 <span class="entity-countries">BEL, CHN, DEU, JPN, MEX, USA<small>6 countries</small></span>
@@ -24819,7 +24842,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="ESP FRA GBR KOR POL TUR USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>VALEO ELECTRIFICATION</strong></span>
 <span class="entity-countries">ESP, FRA, GBR, KOR, POL, TUR, USA<small>7 countries</small></span>
@@ -24847,7 +24870,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN ITA KOR LUX TWN USA VNM" data-categories="export_controls regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>APTIV ELECTRICAL CENTERS (SHANGHAI) CO LTD</strong></span>
 <span class="entity-countries">CHN, ITA, KOR, LUX, TWN, USA, VNM<small>7 countries</small></span>
@@ -24909,7 +24932,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU KOR MYS THA USA VNM" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>BASF PETRONAS CHEMICALS SDN BHD</strong></span>
 <span class="entity-countries">CHN, DEU, KOR, MYS, THA, USA, VNM<small>7 countries</small></span>
@@ -24973,7 +24996,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN GBR HKG JPN KOR THA VNM" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CONG TY CO PHAN DICH VU BAO VE SECOM VIET NAM</strong></span>
 <span class="entity-countries">CHN, GBR, HKG, JPN, KOR, THA, VNM<small>7 countries</small></span>
@@ -25030,7 +25053,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT CHN DEU FRA JPN KOR PRK" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>르노코리아 주식회사</strong></span>
 <span class="entity-countries">AUT, CHN, DEU, FRA, JPN, KOR, PRK<small>7 countries</small></span>
@@ -25102,7 +25125,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN ESP GBR IND JPN KOR USA" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SFO TECHNOLOGIES PRIVATE LIMITED</strong></span>
 <span class="entity-countries">CHN, ESP, GBR, IND, JPN, KOR, USA<small>7 countries</small></span>
@@ -25201,7 +25224,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN ECU GBR IND NLD PAK USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CUMMINS TECHNOLOGIES INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">CHN, ECU, GBR, IND, NLD, PAK, USA<small>7 countries</small></span>
@@ -25265,7 +25288,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="ECU JPN KOR LAO MYS SGP TUR VNM" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>Công Ty Cổ Phần Cao Su Việt Phú Thịnh</strong></span>
 <span class="entity-countries">ECU, JPN, KOR, LAO, MYS, SGP, TUR, VNM<small>8 countries</small></span>
@@ -25349,7 +25372,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU FRA IDN JPN KOR POL TWN" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>SOJITZ MACHINERY CORPORATION</strong></span>
 <span class="entity-countries">CHN, DEU, FRA, IDN, JPN, KOR, POL, TWN<small>8 countries</small></span>
@@ -25416,7 +25439,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN GBR IND KOR NLD PAK TUR USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CUMMINS INDIA LIMITED</strong></span>
 <span class="entity-countries">CHN, GBR, IND, KOR, NLD, PAK, TUR, USA<small>8 countries</small></span>
@@ -25500,7 +25523,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL CHN DEU FIN ITA NLD SWE TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>OUTOKUMPU STAINLESS OY</strong></span>
 <span class="entity-countries">BEL, CHN, DEU, FIN, ITA, NLD, SWE, TUR<small>8 countries</small></span>
@@ -25533,7 +25556,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHE CHN HKG IND JPN TWN VIR VNM" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CôNG TY TNHH CôNG NGHIệP ĐồNG JINTIAN VIệT NAM</strong></span>
 <span class="entity-countries">CHE, CHN, HKG, IND, JPN, TWN, VIR, VNM<small>8 countries</small></span>
@@ -25612,7 +25635,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="IDN IND JPN KOR PRT ROU SGP USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MOLEX (INDIA) PRIVATE LIMITED</strong></span>
 <span class="entity-countries">IDN, IND, JPN, KOR, PRT, ROU, SGP, USA<small>8 countries</small></span>
@@ -25691,7 +25714,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU ESP GBR IND ITA NLD USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MAERSK LINE INDIA PRIVATE LIMITED</strong></span>
 <span class="entity-countries">CHN, DEU, ESP, GBR, IND, ITA, NLD, USA<small>8 countries</small></span>
@@ -25765,7 +25788,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT CHN DEU GBR ITA JPN NLD POL TUR" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>WOLLIN GMBH</strong></span>
 <span class="entity-countries">AUT, CHN, DEU, GBR, ITA, JPN, NLD, POL, TUR<small>9 countries</small></span>
@@ -25798,7 +25821,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BRA CHN HKG IDN JPN KOR TWN USA VNM" data-categories="political_exposure sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>PAN STONE PRECISION INDUSTRIES CO LTD</strong></span>
 <span class="entity-countries">BRA, CHN, HKG, IDN, JPN, KOR, TWN, USA, VNM<small>9 countries</small></span>
@@ -25860,7 +25883,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS CAN CHN IND JPN KOR MYS TUR VNM" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>LG ENERGY SOLUTION LTD</strong></span>
 <span class="entity-countries">AUS, CAN, CHN, IND, JPN, KOR, MYS, TUR, VNM<small>9 countries</small></span>
@@ -25927,7 +25950,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN DEU JPN MYS SGP THA TWN USA VNM" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MEGAGOAL PTE LTD</strong></span>
 <span class="entity-countries">CHN, DEU, JPN, MYS, SGP, THA, TWN, USA, VNM<small>9 countries</small></span>
@@ -25984,7 +26007,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL DEU DNK ITA JPN LUX MEX NLD USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TOKAI RIKA MEXICO SA DE CV</strong></span>
 <span class="entity-countries">BEL, DEU, DNK, ITA, JPN, LUX, MEX, NLD, USA<small>9 countries</small></span>
@@ -26041,7 +26064,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="GBR ITA JPN KOR MEX MYS NLD RUS USA" data-categories="export_controls">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>MARELLI AUTOMOTIVE LIGHTING USA LLC</strong></span>
 <span class="entity-countries">GBR, ITA, JPN, KOR, MEX, MYS, NLD, RUS, USA<small>9 countries</small></span>
@@ -26124,7 +26147,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL CHN DEU FIN FRA KOR NLD SWE USA" data-categories="political_exposure regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>OUTOKUMPU EUROPE OY</strong></span>
 <span class="entity-countries">BEL, CHN, DEU, FIN, FRA, KOR, NLD, SWE, USA<small>9 countries</small></span>
@@ -26167,7 +26190,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT CHN DEU HKG JPN KOR LUX SGP TUR USA" data-categories="sanctions">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TDK (ZHUHAI FTZ) CO LTD</strong></span>
 <span class="entity-countries">AUT, CHN, DEU, HKG, JPN, KOR, LUX, SGP, TUR, USA<small>10 countries</small></span>
@@ -26219,7 +26242,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BEL CAN CHN DEU GBR ITA JPN KOR MEX USA" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>CELANESE POLYMER PRODUCTS LLC</strong></span>
 <span class="entity-countries">BEL, CAN, CHN, DEU, GBR, ITA, JPN, KOR, MEX, USA<small>10 countries</small></span>
@@ -26256,7 +26279,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CAN CHN DEU ECU ITA JPN KOR TWN USA VNM" data-categories="regulatory_action">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TUNG PEI INDUSTRIAL CO LTD</strong></span>
 <span class="entity-countries">CAN, CHN, DEU, ECU, ITA, JPN, KOR, TWN, USA, VNM<small>10 countries</small></span>
@@ -26318,7 +26341,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="CHN HKG HUN IDN JPN KOR MEX SGP TUR USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>XIAMEN FARATRONIC CO LTD</strong></span>
 <span class="entity-countries">CHN, HKG, HUN, IDN, JPN, KOR, MEX, SGP, TUR, USA<small>10 countries</small></span>
@@ -26385,7 +26408,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUS AUT CHN DEU KOR NLD PHL SGP THA USA" data-categories="export_controls political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>AMS ASIA INC</strong></span>
 <span class="entity-countries">AUS, AUT, CHN, DEU, KOR, NLD, PHL, SGP, THA, USA<small>10 countries</small></span>
@@ -26462,7 +26485,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="AUT CHN DEU FRA JPN KOR LUX MEX SGP USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>JATCO MEXICO SA DE CV</strong></span>
 <span class="entity-countries">AUT, CHN, DEU, FRA, JPN, KOR, LUX, MEX, SGP, USA<small>10 countries</small></span>
@@ -26509,7 +26532,7 @@ Countries identified as high-risk by Sayari may not conform with those specified
 </div>
 </div>
 </div>
-</details><details data-filter-row class="entity-card" data-disclosure open>
+</details><details data-filter-row class="entity-card" data-disclosure open data-countries="BGR CHN CZE DEU DNK ITA LUX SWE TUR USA" data-categories="political_exposure">
 <summary><span class="entity-summary">
 <span class="entity-identity"><strong>TEKLAS KAUÇUK SANAYİ VE TİCARET ANONİM ŞİRKETİ BİLİŞİM MERKEZİ ŞUBESİ</strong></span>
 <span class="entity-countries">BGR, CHN, CZE, DEU, DNK, ITA, LUX, SWE, TUR, USA<small>10 countries</small></span>

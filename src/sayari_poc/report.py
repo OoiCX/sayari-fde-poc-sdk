@@ -3,12 +3,14 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pycountry
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 from sayari_poc.models import Findings
 from sayari_poc.presentation import (
     build_report_view,
     exception_note,
+    risk_categories,
     supplier_list_label,
 )
 
@@ -55,6 +57,21 @@ def report_datetime(value: object) -> str:
     return f"{moment.day} {MONTH_NAMES[moment.month - 1]} {moment.year}, {moment:%H:%M} UTC"
 
 
+def country_options(codes: list[str]) -> list[tuple[str, str]]:
+    """Pair each ISO alpha-3 code with a readable name, sorted by that name.
+
+    Cards show only codes, so the dropdown names them: "South Korea (KOR)". A code pycountry does
+    not know is shown as it is rather than guessed. pycountry is pinned in requirements.lock, so
+    the names, and therefore the rendered bytes, don't change between installs.
+    """
+    options = []
+    for code in codes:
+        country = pycountry.countries.get(alpha_3=code)
+        name = (getattr(country, "common_name", None) or country.name) if country else None
+        options.append((code, f"{name} ({code})" if name else code))
+    return sorted(options, key=lambda option: (option[1].casefold(), option[0]))
+
+
 def render_report(findings: Findings, out: Path) -> None:
     """Render HTML without retrieving additional evidence.
 
@@ -72,6 +89,8 @@ def render_report(findings: Findings, out: Path) -> None:
     environment.filters["report_datetime"] = report_datetime
     environment.filters["supplier_list_label"] = supplier_list_label
     environment.filters["exception_note"] = exception_note
+    environment.filters["country_options"] = country_options
+    environment.filters["risk_categories"] = lambda slugs: risk_categories(slugs, view.glossary)
 
     def factor_psa_scope(slug: str) -> str:
         """Locate published possible-identity uncertainty."""

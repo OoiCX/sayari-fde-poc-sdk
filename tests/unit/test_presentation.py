@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 
 from sayari_poc import presentation
-from sayari_poc.models import Findings
+from sayari_poc.models import Findings, OntologyFactor
 from sayari_poc.presentation import ReportView, build_report_view, headline_portfolio
 
 
@@ -43,8 +43,12 @@ def test_build_is_deterministic_preserves_findings_and_has_exact_context(
         "ranked_groups",
         "convergence_portfolios",
         "supplier_rows",
+        "supplier_country_codes",
+        "entity_country_codes",
+        "evidence_options",
+        "category_options",
     }
-    assert len(context) == 16
+    assert len(context) == 20
     assert all(not isinstance(value, Findings) for value in context.values())
     assert context["generated_at"] == findings.generated_at
     assert context["coverage"] == findings.coverage
@@ -282,6 +286,61 @@ def test_headline_reads_only_supplied_manifest(value: object, expected: str | No
         generated_at="injected", suppliers=[], manifest={"headline_portfolio": value}
     )
     assert headline_portfolio(findings) == expected
+
+
+def _factor(slug: str, categories: list[str]) -> OntologyFactor:
+    return OntologyFactor.model_validate(
+        {
+            "id": slug,
+            "label": "Published " + slug,
+            "description": "Synthetic published definition.",
+            "categories": categories,
+            "level": "high",
+            "risk_type": "network",
+        }
+    )
+
+
+def test_risk_categories_are_sorted_unique_and_skip_unpublished_factors() -> None:
+    # Categories come only from factors the ontology publishes, once each, in a stable order.
+    glossary = {
+        "a": _factor("a", ["sanctions", "export_controls"]),
+        "b": _factor("b", ["sanctions"]),
+        "c": _factor("c", []),
+    }
+    assert presentation.risk_categories(["b", "a", "c", "missing"], glossary) == [
+        "export_controls",
+        "sanctions",
+    ]
+    assert presentation.risk_categories([], glossary) == []
+
+
+def test_filter_options_list_only_values_the_cards_carry(findings: Findings) -> None:
+    # Dropdown choices come from the cards: present values only, deduplicated, in a fixed order.
+    suppliers = cast(list[dict[str, Any]], findings.suppliers)
+    suppliers[0]["input_country"] = "DEU"
+    suppliers[1]["input_country"] = None
+    view = build_report_view(findings)
+    assert view.supplier_country_codes == ["DEU", "SGP"]
+    states = {row.get("coverage_status") or "not_attempted" for row in suppliers}
+    assert view.evidence_options == [
+        (state, label) for state, label in presentation.COVERAGE_LABELS.items() if state in states
+    ]
+    assert view.entity_country_codes == sorted(
+        {
+            code
+            for node in findings.shared_nodes
+            for code in cast(list[str], node["countries"] or [])
+        }
+    )
+    assert view.category_options == [("synthetic", "Synthetic")]
+    # Only critical and high factors set an entity's category, because they are why it is flagged.
+    findings.ontology["extra"] = _factor("extra", ["adverse_media"])
+    node = cast(dict[str, Any], findings.shared_nodes[0])
+    node["other_factors"] = [*node["other_factors"], "extra"]
+    assert ("adverse_media", "Adverse media") not in build_report_view(findings).category_options
+    node["severe_factors"] = [*node["severe_factors"], "extra"]
+    assert ("adverse_media", "Adverse media") in build_report_view(findings).category_options
 
 
 def test_presentation_imports_only_models_and_stdlib() -> None:
