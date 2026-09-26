@@ -22,7 +22,7 @@ from sayari_poc.identity import psa_exposure
 from sayari_poc.models import Findings
 from sayari_poc.transport import OfflineCacheMiss
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
-from tests.p3_support import _node, _prepare, _upstream
+from tests.pipeline_support import _node, _prepare, _upstream
 
 pytestmark = pytest.mark.usefixtures("forbid_external_stages", "pipeline_ontology")
 

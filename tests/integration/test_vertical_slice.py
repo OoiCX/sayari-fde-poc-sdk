@@ -18,7 +18,7 @@ from sayari_poc.pipeline import run_pipeline
 from sayari_poc.report import render_report, report_datetime
 from sayari_poc.transport import AuditedTransport, BudgetExceeded, OfflineCacheMiss
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
-from tests.p3_support import entity_payload, resolution_payload
+from tests.pipeline_support import entity_payload, resolution_payload
 
 pytestmark = pytest.mark.usefixtures("pipeline_ontology")
 

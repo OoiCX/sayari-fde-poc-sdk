@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -16,44 +15,7 @@ from scripts.sdk_conformance import (
     inventory_caches,
     main,
 )
-
-
-def upstream_payload() -> dict[str, Any]:
-    return {
-        "filters": {},
-        "partial_results": False,
-        "explored_count": 1,
-        "data": {
-            "paths": [
-                {
-                    "source_entity_id": "root",
-                    "path": [
-                        {
-                            "tier": 2,
-                            "entity_id": "missing-node",
-                            "components": [
-                                {
-                                    "hs_code": "1234",
-                                    "arrival_countries": ["SGP"],
-                                    "departure_countries": ["USA"],
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-            "entities": {
-                "root": {
-                    "id": "root",
-                    "type": "company",
-                    "label": "Synthetic entity",
-                    "risk_factors": [],
-                    "countries": [],
-                    "translated_label": "Synthetic translation",
-                }
-            },
-        },
-    }
+from tests.sdk_support import dangling_upstream_payload
 
 
 @pytest.mark.parametrize(
@@ -74,7 +36,7 @@ def test_shape_classification(payload: object, expected: str) -> None:
 
 def test_path_counts_missing_ids_and_model_extra() -> None:
     # The structure counts include hops to missing entities and extra fields the model kept.
-    payload = upstream_payload()
+    payload = dangling_upstream_payload()
     # Duplicate records must count separately; nothing is deduplicated as a graph.
     payload["data"]["paths"] *= 2
     result = inspect_response(json.dumps(payload).encode(), "synthetic.json")
@@ -95,7 +57,7 @@ def test_path_counts_missing_ids_and_model_extra() -> None:
 
 def test_validation_failure_preserves_positions_without_disclosing_value() -> None:
     # Validation errors keep numeric list positions but redact everything taken from the source.
-    payload = upstream_payload()
+    payload = dangling_upstream_payload()
     payload["data"]["paths"][0]["path"][0]["components"][0]["hs_code"] = 1234
     result = inspect_response(json.dumps(payload).encode(), "synthetic.json")
     assert result["pass"] is False
@@ -111,7 +73,7 @@ def test_validation_failure_preserves_positions_without_disclosing_value() -> No
 
 def test_missing_field_does_not_disclose_parent_payload() -> None:
     # A missing-field error never discloses the rest of the response.
-    payload = upstream_payload()
+    payload = dangling_upstream_payload()
     del payload["filters"]
     result = inspect_response(json.dumps(payload).encode(), "synthetic.json")
     assert result["pass"] is False

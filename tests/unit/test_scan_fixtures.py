@@ -13,7 +13,7 @@ from zipfile import ZipFile
 import pytest
 
 from scripts import sdk_conformance
-from tests.unit.test_sdk_conformance import upstream_payload
+from tests.sdk_support import dangling_upstream_payload
 
 SCANNER = runpy.run_path(str(Path(__file__).parents[2] / "scripts" / "scan_fixtures.py"))
 
@@ -28,7 +28,7 @@ def test_conformance_cli_redacts_input_values_and_dynamic_keys(
     # Conformance diagnostics redact both response values and dynamic mapping keys.
     private = "synthetic-private-value"
     private_path = "C:\\Users\\synthetic-private\\evidence.json"
-    payload = upstream_payload()
+    payload = dangling_upstream_payload()
     if location == "nested_value":
         payload["data"]["paths"][0]["path"][0]["components"][0]["hs_code"] = {
             "authorization": {"access_token": private, "path": private_path}

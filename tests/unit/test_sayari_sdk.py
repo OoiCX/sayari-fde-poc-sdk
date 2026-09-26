@@ -35,7 +35,7 @@ from sayari_poc.transport import (
 )
 
 # Reuse the synthetic payload builders instead of keeping a second copy here.
-from tests.unit.test_p2_stages import candidate, profile
+from tests.sdk_support import candidate, profile
 
 TOKEN = "synthetic-in-process-access-value"
 Handler = Callable[[httpx.Request], httpx.Response]

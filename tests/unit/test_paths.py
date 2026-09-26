@@ -26,9 +26,9 @@ from sayari_poc.models import (
 from sayari_poc.report import report_datetime
 from sayari_poc.sayari_sdk import SayariClient
 from tests.ontology_support import synthetic_ontology
-from tests.p3_support import _node, _upstream
-from tests.unit.test_p2_stages import QueuedCache
-from tests.unit.test_schema_load import supplier
+from tests.pipeline_support import _node, _upstream
+from tests.sdk_support import QueuedCache
+from tests.warehouse_support import supplier
 
 COMPONENT_KEYS = ["hs_code", "departure_countries", "arrival_countries", "min_date", "max_date"]
 MANIFEST_KEYS = [

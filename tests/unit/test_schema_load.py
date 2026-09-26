@@ -12,63 +12,16 @@ from sayari_poc.analysis import build_warehouse, create_schema
 from sayari_poc.models import (
     EntityProfile,
     ResolvedEntity,
-    RiskFactor,
     UpstreamEntity,
     UpstreamResult,
 )
 from sayari_poc.sayari_sdk import SayariClient
 from sayari_poc.transport import AuditedTransport
+from tests.warehouse_support import node, profile, result, supplier
 
 SampleInputs = tuple[list[ResolvedEntity], dict[str, EntityProfile], dict[str, UpstreamResult]]
 
 TABLES = {"suppliers", "upstream_entities", "supplier_upstream", "risk_factors", "supply_paths"}
-
-
-def supplier(entity_id: str = "S1", row: int = 2, sheet: str = "list_3") -> ResolvedEntity:
-    return ResolvedEntity(
-        row_number=row,
-        sheet=sheet,
-        input_name="Supplier " + entity_id,
-        entity_id=entity_id,
-        label="Resolved " + entity_id,
-        translated_label="Translated " + entity_id,
-        match_strength="strong",
-        status="resolved",
-    )
-
-
-def node(entity_id: str = "U1") -> UpstreamEntity:
-    return UpstreamEntity(
-        entity_id=entity_id,
-        label="\u77f3\u5bb6\u5e84\u6cf0\u660e\u987f",
-        translated_label="Shijiazhuang Taimington",
-        countries=["CHN", "MYS"],
-        country_count=2,
-        risk_factors=["owned_by_military_civil_fusion", "unknown_factor"],
-    )
-
-
-def result(entity_id: str, *entities: UpstreamEntity) -> UpstreamResult:
-    return UpstreamResult(
-        supplier_id=entity_id,
-        entities={item.entity_id: item for item in entities},
-        status="assessed" if entities else "no_data",
-        partial_results=False,
-        explored_count=42,
-    )
-
-
-def profile(entity_id: str = "S1") -> EntityProfile:
-    return EntityProfile(
-        entity_id=entity_id,
-        label="Profile " + entity_id,
-        translated_label=None,
-        countries=["USA"],
-        degree=10,
-        psa_count=0,
-        max_level="high",
-        risk_factors=[RiskFactor(factor="raw_profile_factor", level="high", metadata={})],
-    )
 
 
 @pytest.fixture(autouse=True)

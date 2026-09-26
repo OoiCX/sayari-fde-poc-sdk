@@ -1,22 +1,25 @@
-"""Block real network access for every test and share the P3 fixtures with both suites."""
+"""Block real network access for every test and share the pipeline fixtures with both suites."""
 
 import socket
 
 import pytest
 
-from tests.p3_support import (
+from tests.pipeline_support import (
+    audit_case as audit_case,
+)
+from tests.pipeline_support import (
     cache as cache,
 )
-from tests.p3_support import (
+from tests.pipeline_support import (
     findings as findings,
 )
-from tests.p3_support import (
+from tests.pipeline_support import (
     forbid_external_stages as forbid_external_stages,
 )
-from tests.p3_support import (
+from tests.pipeline_support import (
     graph as graph,
 )
-from tests.p3_support import (
+from tests.pipeline_support import (
     settings as settings,
 )
 

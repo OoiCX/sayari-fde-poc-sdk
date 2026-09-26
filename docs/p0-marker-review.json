@@ -111,7 +111,7 @@
         "token_type"
       ],
       "reason": "Scanner detection literals and synthetic encoded-secret/path test cases; absolute-path markers are the detector pattern or fictional test path. P1 criterion 11 re-review: explicit scan paths are now required; stale fallback removed and missing-path regression added. Marker categories remain documentation/test literals; LF bytes preserved.",
-      "sha256": "101ec28fee637707ebda5c2528350e47b301234a6daa95a62cd092883f39fa5d"
+      "sha256": "084f413a839a01aade2b6545c33a498ad5de7da89f3160a65d389201415132a0"
     },
     "5f0a8bf52de5dd27429690671331b75f18ef27cd5197eb3a0b8e6ed32c339c32": {
       "categories": [],

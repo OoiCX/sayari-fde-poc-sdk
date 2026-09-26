@@ -18,10 +18,8 @@ from sayari_poc.risk_taxonomy import RiskOntology
 from sayari_poc.sayari_sdk import SayariClient
 from sayari_poc.transport import AuditedTransport, OfflineCacheMiss, RateLimitPacer
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
-from tests.p3_support import entity_payload, resolution_payload
-from tests.unit.test_error_isolation import audit_case as _audit_case
+from tests.pipeline_support import entity_payload, resolution_payload
 
-audit_case = _audit_case
 pytestmark = pytest.mark.usefixtures("pipeline_ontology")
 
 

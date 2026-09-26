@@ -1,4 +1,4 @@
-"""P3 boundary regressions: honest errors, lifecycle, telemetry and pure rendering."""
+"""Boundary regressions: honest errors, lifecycle, telemetry and pure rendering."""
 
 import ast
 from dataclasses import dataclass, field
@@ -17,8 +17,8 @@ from sayari_poc.models import Findings, UpstreamResult
 from sayari_poc.sayari_sdk import SayariClient
 from sayari_poc.transport import BudgetExceeded, RateLimitPacer, SayariError
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
-from tests.p3_support import _prepare
-from tests.unit.test_p2_stages import client_for, profile, upstream_payload
+from tests.pipeline_support import _prepare
+from tests.sdk_support import client_for, profile, upstream_payload
 
 pytestmark = pytest.mark.usefixtures("pipeline_ontology")
 

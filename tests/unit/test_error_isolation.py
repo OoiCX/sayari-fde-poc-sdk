@@ -8,7 +8,6 @@ from unittest.mock import Mock
 import duckdb
 import httpx
 import pytest
-from openpyxl import Workbook
 
 from sayari_poc import pipeline
 from sayari_poc.analysis import UnclassifiedRiskFactors
@@ -16,7 +15,7 @@ from sayari_poc.cache import ResponseCache
 from sayari_poc.config import Settings
 from sayari_poc.transport import AuditedTransport, OfflineCacheMiss
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
-from tests.p3_support import _node, _upstream, entity_payload, resolution_payload
+from tests.pipeline_support import _node, _upstream
 
 pytestmark = pytest.mark.usefixtures("pipeline_ontology")
 
@@ -97,105 +96,6 @@ def test_malformed_supplier_evidence_preserves_every_other_supplier(
     )
     assert "ValidationError" in (output / "report.html").read_text(encoding="utf-8")
     assert "sensitive" not in caplog.text
-
-
-@pytest.fixture
-def audit_case(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Settings, ResponseCache]:
-    """Three independent suppliers plus a separate portfolio for audit status coverage."""
-    monkeypatch.chdir(tmp_path)
-    configured = settings.model_copy(
-        update={
-            "entity_file_path": tmp_path / "input.xlsx",
-            "duckdb_path": tmp_path / "warehouse.duckdb",
-            "hub_max_countries": 3,
-            "max_upstream_depth": 2,
-            "upstream_limit": 17,
-        }
-    )
-    workbook = Workbook()
-    workbook.remove(cast(Any, workbook.active))
-    cache = ResponseCache(configured.cache_dir)
-    rows: dict[str, list[tuple[str, str | None]]] = {
-        "list_3": [("Supplier A", "a"), ("Supplier B", "b"), ("Supplier C", "c")],
-        "audit_cases": [
-            ("Additional A", "w"),
-            ("Additional duplicate", "w"),
-            ("Additional absent", None),
-            ("Additional weak", "weak"),
-            ("Additional invalid", "bad"),
-        ],
-    }
-    for portfolio, inputs in rows.items():
-        sheet = workbook.create_sheet(portfolio)
-        sheet.append(["name", "address", "country"])
-        for name, identifier in inputs:
-            sheet.append([name, None, None])
-            data = [
-                {
-                    "entity_id": identifier,
-                    "label": identifier,
-                    "match_strength": {"value": "weak" if identifier == "weak" else "strong"},
-                }
-            ]
-            cache.put(
-                cache.key(
-                    httpx.Request(
-                        "GET", configured.sayari_api_base + "/v1/resolution", params={"name": name}
-                    )
-                ),
-                json.dumps(
-                    resolution_payload([{}] if identifier == "bad" else data if identifier else []),
-                    ensure_ascii=False,
-                ).encode("utf-8"),
-            )
-            if identifier and identifier not in {"weak", "bad"}:
-                cache.put(
-                    cache.key(
-                        httpx.Request(
-                            "GET",
-                            configured.sayari_api_base + f"/v1/entity_summary/{identifier}",
-                            params={},
-                        )
-                    ),
-                    json.dumps(
-                        entity_payload(
-                            {
-                                "id": identifier,
-                                "label": name,
-                                "countries": [],
-                                "risk": {},
-                                "psa_count": 0,
-                            }
-                        ),
-                        ensure_ascii=False,
-                    ).encode("utf-8"),
-                )
-                cache.put(
-                    cache.key(
-                        httpx.Request(
-                            "GET",
-                            configured.sayari_api_base + f"/v1/supply_chain/upstream/{identifier}",
-                            params={
-                                "max_depth": configured.max_upstream_depth,
-                                "limit": configured.upstream_limit,
-                            },
-                        ),
-                    ),
-                    json.dumps(
-                        {
-                            "filters": {},
-                            "explored_count": 0,
-                            "data": {"paths": [], "entities": {}},
-                            "partial_results": False,
-                        },
-                        ensure_ascii=False,
-                    ).encode("utf-8"),
-                )
-    workbook.save(configured.entity_file_path)
-    workbook.close()
-    return configured, cache
 
 
 def _matches(stage: str, path: str, params: dict[str, Any] | None) -> bool:

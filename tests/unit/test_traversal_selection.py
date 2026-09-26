@@ -20,8 +20,8 @@ from sayari_poc.identity import psa_exposure
 from sayari_poc.models import IngestResult, InputEntity, RiskFactor
 from sayari_poc.pipeline import _convergence
 from tests.ontology_support import synthetic_ontology
-from tests.unit.test_p2_stages import client_for, upstream_payload
-from tests.unit.test_schema_load import node, profile, result, supplier
+from tests.sdk_support import client_for, upstream_payload
+from tests.warehouse_support import node, profile, result, supplier
 
 
 def test_traversal_root_response_retains_entity_without_self_edge(tmp_path: Path) -> None:
