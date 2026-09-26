@@ -23,11 +23,10 @@ Double-click `report.html`. It opens in your default browser.
 Don't open it by clicking the file on GitHub: GitHub shows the file's source code,
 not the report.
 
-## Running the analysis on live Sayari data
+## Rebuild the report yourself (no credentials needed)
 
-Reading the report needs nothing else. To rerun the analysis against Sayari's live
-data you need **your own Sayari API credentials** (a client ID and client secret);
-none are included here. You also need Python 3.13.
+The Sayari responses behind the report are saved in `data/cache/`, so you can
+rebuild it offline without contacting Sayari. You need Python 3.13.
 
 1. Open a terminal in the project folder and install:
 
@@ -39,6 +38,27 @@ none are included here. You also need Python 3.13.
    ```
 
    On macOS or Linux, activate with `source .venv/bin/activate` instead.
+
+2. Run:
+
+   ```console
+   python -m sayari_poc run --sheet list_3 --offline
+   ```
+
+3. Open the rebuilt report at `data/processed/report.html`. It shows the same
+   results as `docs/report.html`.
+
+For a byte-for-byte match with the published file, set the report's generation time
+first: in PowerShell run `$env:DECLARED_GENERATED_AT="2026-09-24T01:52:59.468774+00:00"`,
+or on macOS/Linux `export DECLARED_GENERATED_AT=2026-09-24T01:52:59.468774+00:00`.
+This is the check the project's CI runs on every change.
+
+## Running the analysis on live Sayari data
+
+To rerun the analysis against Sayari's live data you need **your own Sayari API
+credentials** (a client ID and client secret); none are included here.
+
+1. Install as above.
 
 2. Copy `.env.example` to a new file named `.env`, then fill in your credentials:
 
@@ -59,3 +79,7 @@ none are included here. You also need Python 3.13.
 
 A full run makes about 142 requests to Sayari and takes a few minutes. Sayari's data
 changes over time, so your numbers can differ from the published report.
+
+A live run replaces the saved responses in `data/cache/` with the new data. To go back
+to the published data, download the project again (or, in a git clone, run
+`git checkout -- data/cache`).
