@@ -971,6 +971,13 @@ def test_filter_dropdowns_match_what_each_card_displays(findings: Findings, tmp_
             assert any(value in (attrs.get(keys[facet]) or "").split() for attrs in cards[scope])
 
 
+def test_rendered_exception_uses_mapped_note(findings: Findings, tmp_path: Path) -> None:
+    # The report maps a real no-match exception from assembled Findings to its display explanation.
+    exception = next(e for e in findings.exceptions if e.get("error_type") == "no_match")
+    note = presentation.EXCEPTION_NOTES[exception["reason"]]
+    assert note in _html(findings, tmp_path)
+
+
 def test_country_options_name_known_codes_and_keep_unknown_ones() -> None:
     # Dropdown labels name each country and sort by that name; a code pycountry doesn't know
     # stays as it is rather than being guessed.
@@ -2559,3 +2566,58 @@ def test_breakdown_bars_are_decorative_and_never_exceed_their_track(
         "data-entity-group",
     ):
         assert hook not in section
+
+
+def test_non_headline_connections_disclose_unretained_path_examples(
+    findings: Findings, tmp_path: Path
+) -> None:
+    # Other portfolios disclose unretained examples without claiming retrieval found no paths.
+    rows = presentation.build_report_view(findings).supplier_rows
+    entries = _supplier_entries(_html(findings, tmp_path))
+    sentence = (
+        "Path examples are kept only for the screened supplier list, "
+        "so none are shown for this connection."
+    )
+    other_rows = [row for row in rows if row.portfolio == "another_portfolio"]
+    assert len(other_rows) == 2
+    for row in other_rows:
+        assert row.exposure_count == row.path_nodes_not_kept == 1
+        assert row.path_nodes_with_evidence == row.path_nodes_without_evidence == 0
+        entry = entries[row.dom_id]
+        assert sentence in entry
+        assert "No path evidence was retrieved" not in entry
+        assert "Path evidence is available" not in entry
+    headline = [row for row in rows if row.portfolio == "list_3" and row.exposure_count]
+    assert headline
+    for row in headline:
+        assert row.path_nodes_not_kept == 0
+        assert sentence not in entries[row.dom_id]
+        assert row.path_nodes_with_evidence + row.path_nodes_without_evidence == row.exposure_count
+        assert (
+            "Path evidence is available"
+            if row.path_nodes_with_evidence
+            else "No path evidence was retrieved"
+        ) in entries[row.dom_id]
+
+
+def test_non_headline_multiple_connections_use_plural_path_disclosure(
+    findings: Findings, tmp_path: Path
+) -> None:
+    # Two flagged nodes for a non-headline supplier require plural wording without an absence claim.
+    other_node = next(
+        node for node in findings.shared_nodes if node["portfolio"] == "another_portfolio"
+    )
+    findings.shared_nodes.append({**other_node, "upstream_id": "second-flagged-node"})
+    rows = presentation.build_report_view(findings).supplier_rows
+    entries = _supplier_entries(_html(findings, tmp_path))
+    other_rows = [row for row in rows if row.portfolio == "another_portfolio"]
+    assert len(other_rows) == 2
+    for row in other_rows:
+        assert row.exposure_count == row.path_nodes_not_kept == 2
+        entry = entries[row.dom_id]
+        assert (
+            "Path examples are kept only for the screened supplier list, "
+            "so none are shown for these connections."
+        ) in entry
+        assert "so none are shown for this connection." not in entry
+        assert "No path evidence was retrieved" not in entry

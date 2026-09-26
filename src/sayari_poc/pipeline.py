@@ -37,7 +37,7 @@ from sayari_poc.resolve import resolve_entities
 from sayari_poc.risk_taxonomy import RiskOntology, load_ontology
 from sayari_poc.rollups import supplier_breakdown
 from sayari_poc.sayari_sdk import SayariClient
-from sayari_poc.transport import OfflineCacheMiss
+from sayari_poc.transport import OfflineCacheMiss, SayariAuthError
 from sayari_poc.upstream import fetch_upstreams
 
 OUTPUT_DIR = Path("data/processed")
@@ -257,7 +257,7 @@ def run_pipeline(
     refresh: bool = False,
     output_dir: Path = OUTPUT_DIR,
 ) -> Findings:
-    """Run sequential screening and publish all four artifacts.
+    """Run sequential screening and publish all three artifacts.
 
     The global limit counts named entities in selected-sheet order, then Excel row order. All
     selected headers validate, even beyond the limit. Duplicate identities share canonical
@@ -278,11 +278,22 @@ def run_pipeline(
 
     Raises:
         ValueError: Options conflict or an output would overwrite the workbook.
+        SayariAuthError: Refresh credentials are missing or a stage reports authentication
+            failure. Existing outputs are preserved.
         OfflineCacheMiss: Required cached evidence is absent. Error artifacts are written before
             this failure is raised.
     """
     if offline and refresh:
         raise InputError("offline and refresh are incompatible")
+    if refresh and (
+        not (settings.sayari_client_id or "").strip()
+        or settings.sayari_client_secret is None
+        or not settings.sayari_client_secret.get_secret_value().strip()
+    ):
+        raise SayariAuthError(
+            "Sayari refresh requires non-blank SAYARI_CLIENT_ID and SAYARI_CLIENT_SECRET. "
+            "No outputs were written."
+        )
     for name in (
         "findings.json",
         "report.html",
@@ -332,6 +343,15 @@ def run_pipeline(
         )
     finally:
         client.close()
+    # Stages retain row failures, but authentication failure must not replace a usable report.
+    if any(
+        row.error_type == "SayariAuthError" or row.profile_error_type == "SayariAuthError"
+        for row in resolved
+    ) or any(result.error_type == "SayariAuthError" for result in upstream.values()):
+        raise SayariAuthError(
+            "Sayari authentication failed; check SAYARI_CLIENT_ID and SAYARI_CLIENT_SECRET. "
+            "No outputs were written."
+        )
     portfolios = list(ingested)
     headline = DEFAULT_SHEET if DEFAULT_SHEET in portfolios else next(iter(portfolios), None)
     settings.duckdb_path.parent.mkdir(parents=True, exist_ok=True)

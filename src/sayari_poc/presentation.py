@@ -232,6 +232,7 @@ class SupplierRow:
     path_stored_count: int
     path_nodes_with_evidence: int
     path_nodes_without_evidence: int
+    path_nodes_not_kept: int
 
 
 @dataclass(frozen=True)
@@ -499,8 +500,13 @@ def _supplier_rows(findings: Findings) -> list[SupplierRow]:
                 path_stored_count=sum(
                     route.occurrences for node in exposed for route in node.routes
                 ),
-                path_nodes_with_evidence=sum(node.path_observed for node in exposed),
-                path_nodes_without_evidence=sum(not node.path_observed for node in exposed),
+                path_nodes_with_evidence=sum(
+                    node.paths_available and node.path_observed for node in exposed
+                ),
+                path_nodes_without_evidence=sum(
+                    node.paths_available and not node.path_observed for node in exposed
+                ),
+                path_nodes_not_kept=sum(not node.paths_available for node in exposed),
             )
         )
     # Most exposed suppliers first; break ties by portfolio and row number so the order is stable.

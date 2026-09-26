@@ -10,13 +10,14 @@ from unittest.mock import Mock
 import httpx
 import pytest
 from openpyxl import Workbook
+from pydantic import SecretStr
 
 from sayari_poc.cache import ResponseCache
 from sayari_poc.cli import main
 from sayari_poc.config import Settings
 from sayari_poc.pipeline import run_pipeline
 from sayari_poc.report import render_report, report_datetime
-from sayari_poc.transport import AuditedTransport, BudgetExceeded, OfflineCacheMiss
+from sayari_poc.transport import AuditedTransport, BudgetExceeded, OfflineCacheMiss, SayariAuthError
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
 from tests.pipeline_support import entity_payload, resolution_payload
 
@@ -150,15 +151,17 @@ def no_auth_or_send(monkeypatch: pytest.MonkeyPatch) -> Iterator[Mock]:
     [("high", "high"), ("relevant", "relevant")],
     indirect=["seeded_cache"],
 )
+@pytest.mark.parametrize("offline", [False, True])
 def test_slice_produces_findings_and_report(
     seeded_cache: Settings,
     no_auth_or_send: Mock,
     tmp_path: Path,
     expected_level: str,
+    offline: bool,
 ) -> None:
-    # A cached supplier runs through the full pipeline and produces both core artifacts.
+    # Both cache-through and offline runs need no credentials when all evidence is cached.
     before = seeded_cache.entity_file_path.read_bytes()
-    findings = run_pipeline(seeded_cache, limit=1, offline=True)
+    findings = run_pipeline(seeded_cache, limit=1, offline=offline)
     assert len(cast(list[dict[str, Any]], findings.suppliers)) == 1
     supplier = cast(list[dict[str, Any]], findings.suppliers)[0]
     assert supplier["status"] == supplier["resolution_status"] == "resolved"
@@ -335,12 +338,88 @@ def test_dry_run_does_not_even_construct_client(
     client = Mock(side_effect=AssertionError("Dry run must not construct client"))
     monkeypatch.setattr("sayari_poc.pipeline.SayariClient", client)
     assert main(["run", "--limit", "1", "--dry-run", *mode]) == 0
-    output = capsys.readouterr().out.lower()
-    assert "planned calls" in output and "3" in output and "estimate" in output
+    output = capsys.readouterr().out
+    assert json.loads(output.splitlines()[0]) == {
+        "sheets": ["list_3"],
+        "input_entities": 1,
+        "resolution_requests": 1,
+        "profile_requests_up_to": 1,
+        "upstream_requests_up_to": 1,
+        "planned_calls": 3,
+        "ingestion_diagnostics": 0,
+    }
+    assert "No API calls made" in output
+    assert "Planned calls" in output and "estimate" in output
     if mode:
         assert f"{mode[0]} is not executed during dry-run" in output
     client.assert_not_called()
     assert not Path("data/processed/findings.json").exists()
+
+
+@pytest.mark.parametrize(
+    "client_id,secret",
+    [
+        (None, None),
+        ("synthetic-id", None),
+        (None, "synthetic-secret"),
+        (" ", "synthetic-secret"),
+        ("synthetic-id", "\t "),
+    ],
+)
+def test_refresh_missing_credentials_preserves_outputs_before_ingestion(
+    seeded_cache: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    no_auth_or_send: Mock,
+    client_id: str | None,
+    secret: str | None,
+) -> None:
+    # Missing or blank credentials stop refresh before ingestion, client creation or output writes.
+    configured = seeded_cache.model_copy(
+        update={
+            "sayari_client_id": client_id,
+            "sayari_client_secret": SecretStr(secret) if secret is not None else None,
+        }
+    )
+    output = Path("data/processed")
+    output.mkdir(parents=True)
+    sentinels = {
+        name: f"previous {name}\r\n".encode()
+        for name in ("findings.json", "report.html", "run_manifest.json")
+    }
+    for name, content in sentinels.items():
+        (output / name).write_bytes(content)
+    ingestion = Mock(side_effect=AssertionError("Preflight must precede ingestion"))
+    client = Mock(side_effect=AssertionError("Preflight must precede client construction"))
+    monkeypatch.setattr("sayari_poc.pipeline._ingest", ingestion)
+    monkeypatch.setattr("sayari_poc.pipeline.SayariClient", client)
+    with pytest.raises(SayariAuthError) as caught:
+        run_pipeline(configured, refresh=True)
+    assert "SAYARI_CLIENT_ID" in str(caught.value)
+    assert "SAYARI_CLIENT_SECRET" in str(caught.value)
+    assert "No outputs were written" in str(caught.value)
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == sentinels
+    ingestion.assert_not_called()
+    client.assert_not_called()
+    no_auth_or_send.assert_not_called()
+
+
+def test_cli_refresh_missing_credentials_has_safe_failure_message(
+    seeded_cache: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    no_auth_or_send: Mock,
+) -> None:
+    # The CLI names the missing settings without reporting success or exposing private inputs.
+    monkeypatch.setattr("sayari_poc.cli.load_settings", lambda: seeded_cache)
+    assert main(["run", "--sheet", "list_3", "--refresh"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Run failed: Sayari refresh requires non-blank SAYARI_CLIENT_ID and "
+        "SAYARI_CLIENT_SECRET. No outputs were written.\n"
+    )
+    assert not Path("data/processed").exists()
+    no_auth_or_send.assert_not_called()
 
 
 def test_limit_stops_ingestion_and_processing(seeded_cache: Settings) -> None:

@@ -9,10 +9,10 @@ description = "Sayari Forward Deployed Engineer Proof of Concept — sub-tier co
 readme = "README.md"
 classifiers = [
     "Private :: Do Not Upload",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     # The official Sayari client. Pinned EXACTLY: the SDK is beta and states that

@@ -9,15 +9,122 @@ import duckdb
 import httpx
 import pytest
 
-from sayari_poc import pipeline
+from sayari_poc import cli, pipeline
 from sayari_poc.analysis import UnclassifiedRiskFactors
 from sayari_poc.cache import ResponseCache
 from sayari_poc.config import Settings
-from sayari_poc.transport import AuditedTransport, OfflineCacheMiss
+from sayari_poc.sayari_sdk import SayariClient
+from sayari_poc.transport import AuditedTransport, OfflineCacheMiss, RateLimitPacer, SayariAuthError
 from tests.ontology_support import pipeline_ontology as pipeline_ontology
 from tests.pipeline_support import _node, _upstream
 
 pytestmark = pytest.mark.usefixtures("pipeline_ontology")
+
+
+@pytest.mark.parametrize("entrypoint", ["pipeline", "cli"])
+@pytest.mark.parametrize("failure", ["rejected", "overflow"])
+def test_rejected_token_is_attempted_once_and_preserves_pipeline_outputs(
+    audit_case: tuple[Settings, ResponseCache],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    entrypoint: str,
+    failure: str,
+) -> None:
+    # Rejected or unusable tokens fail once, preserving artifacts and avoiding warehouse creation.
+    configured, _ = audit_case
+    output = tmp_path / "data/processed"
+    output.mkdir(parents=True)
+    sentinels = {
+        name: f"previous {name}\r\n".encode()
+        for name in ("findings.json", "report.html", "run_manifest.json")
+    }
+    for name, content in sentinels.items():
+        (output / name).write_bytes(content)
+    paths: list[str] = []
+    clients: list[SayariClient] = []
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if failure == "overflow":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "synthetic-token",
+                    "expires_in": 10**100,
+                    "token_type": "Bearer",
+                },
+            )
+        return httpx.Response(401, json={"message": "synthetic-private-rejection"})
+
+    def client_factory(settings: Settings, cache: ResponseCache, **kwargs: Any) -> SayariClient:
+        client = SayariClient(
+            settings,
+            cache,
+            transport=httpx.MockTransport(reject),
+            pacer=RateLimitPacer(sleep=lambda _: None),
+            **kwargs,
+        )
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(pipeline, "SayariClient", client_factory)
+    message = (
+        "Sayari authentication failed; check SAYARI_CLIENT_ID and SAYARI_CLIENT_SECRET. "
+        "No outputs were written."
+    )
+    if entrypoint == "pipeline":
+        with pytest.raises(SayariAuthError) as caught:
+            pipeline.run_pipeline(configured, refresh=True, output_dir=output)
+        assert str(caught.value) == message
+    else:
+        monkeypatch.setattr(cli, "load_settings", lambda: configured)
+        assert cli.main(["run", "--sheet", "list_3", "--refresh"]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.endswith(f"Run failed: {message}\n")
+        assert "synthetic-private-rejection" not in captured.err
+    assert paths == ["/oauth/token"]
+    assert clients[0].audit.auth_http_attempts == 1
+    assert clients[0].audit.data_http_attempts == clients[0].audit.pacing_waits == 0
+    assert not configured.duckdb_path.exists()
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == sentinels
+    assert "synthetic-private-rejection" not in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["resolution", "profile", "upstream"])
+def test_authentication_row_failure_is_fatal_before_assembly(
+    audit_case: tuple[Settings, ResponseCache],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    # Auth failure at any stage is fatal at the pipeline boundary while stages still isolate rows.
+    configured, _ = audit_case
+    output = tmp_path / "previous"
+    output.mkdir()
+    sentinels = {
+        name: f"previous {name}".encode()
+        for name in ("findings.json", "report.html", "run_manifest.json")
+    }
+    for name, content in sentinels.items():
+        (output / name).write_bytes(content)
+    original = AuditedTransport.handle_request
+
+    def fail_auth(self: AuditedTransport, request: httpx.Request) -> httpx.Response:
+        if _matches(stage, request.url.path, dict(request.url.params)):
+            raise SayariAuthError("synthetic-private-exception")
+        return original(self, request)
+
+    assembly = Mock(side_effect=AssertionError("Authentication must fail before assembly"))
+    monkeypatch.setattr(AuditedTransport, "handle_request", fail_auth)
+    monkeypatch.setattr(pipeline, "assemble_findings", assembly)
+    with pytest.raises(SayariAuthError, match="No outputs were written"):
+        pipeline.run_pipeline(configured, offline=True, output_dir=output)
+    assembly.assert_not_called()
+    assert not configured.duckdb_path.exists()
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == sentinels
 
 
 @pytest.mark.parametrize("malformation", ["label", "countries", "factors", "blank", "source"])

@@ -13,7 +13,7 @@ import pytest
 from sayari_poc.cache import ResponseCache
 from sayari_poc.config import Settings
 from sayari_poc.enrich import fetch_profiles
-from sayari_poc.models import InputEntity, ResolvedEntity
+from sayari_poc.models import InputEntity, ResolvedEntity, UpstreamResult
 from sayari_poc.resolve import resolve_entities
 from sayari_poc.sayari_sdk import SayariClient
 from sayari_poc.transport import (
@@ -131,12 +131,22 @@ def test_bad_resolution_is_error_and_later_row_still_succeeds(
     assert rows[0].error_type == "ValidationError"
 
 
-def test_exact_resolution_query_preserves_unicode_optional_fields(tmp_path: Path) -> None:
+def test_exact_resolution_query_preserves_unicode_optional_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The resolution query the SDK builds keeps Unicode text and the optional fields.
     row = source().model_copy(
-        update={"name": "M?ller & S?hne", "address": "Stra?e 1", "country": "DEU"}
+        update={"name": "Müller & Söhne", "address": "Straße 1", "country": "DEU"}
     )
     client, cache = client_for(tmp_path, {"fields": {}, "data": []})
+    queries: list[dict[str, str]] = []
+    original_key = cache.key
+
+    def capture_query(request: httpx.Request) -> str:
+        queries.append(dict(request.url.params))
+        return original_key(request)
+
+    monkeypatch.setattr(cache, "key", capture_query)
     with client:
         resolve_entities(client, [row])
     request = httpx.Request(
@@ -144,7 +154,8 @@ def test_exact_resolution_query_preserves_unicode_optional_fields(tmp_path: Path
         "https://api.sayari.com/v1/resolution",
         params={"name": row.name, "address": row.address, "country": row.country},
     )
-    assert cache.keys == [cache.key(request)]
+    assert queries == [{"name": "Müller & Söhne", "address": "Straße 1", "country": "DEU"}]
+    assert cache.keys == [original_key(request)]
 
 
 def test_only_resolved_rows_are_profiled_and_traversed_in_sorted_distinct_order(
@@ -577,3 +588,48 @@ def test_mocked_response_and_cached_replay_preserve_scalar_types_and_raw_bytes(
     assert live.model_dump_json() == replay.model_dump_json()
     assert type(replay.risk_factors[0].value) is int
     assert type(replay.risk_factors[1].value) is float
+
+
+@pytest.mark.parametrize("evidence", ["root_only", "non_root", "path"])
+def test_no_data_consistency_allows_only_root_without_paths(evidence: str) -> None:
+    # Empty upstream coverage may retain the root, but another entity or any path is inconsistent.
+    entities = {
+        "root": {
+            "entity_id": "root",
+            "label": "Root",
+            "countries": [],
+            "country_count": 0,
+            "risk_factors": [],
+        }
+    }
+    paths = []
+    if evidence == "non_root":
+        entities["other"] = {**entities["root"], "entity_id": "other"}
+    elif evidence == "path":
+        paths = [
+            {
+                "source_entity_id": "root",
+                "path_index": 0,
+                "hops": [{"entity_id": "root", "tier": 1, "components": []}],
+            }
+        ]
+    original = UpstreamResult.model_validate(
+        {
+            "supplier_id": "root",
+            "entities": entities,
+            "paths": paths,
+            "partial_results": False,
+            "explored_count": 1,
+            "status": "no_data",
+        }
+    )
+    client = create_autospec(SayariClient, instance=True)
+    client.upstream.return_value = original
+    result = fetch_upstream(client, "root", Settings(_env_file=None))
+    if evidence == "root_only":
+        assert result == original
+        assert result.status == "no_data" and result.error_type is None
+        assert set(result.entities) == {"root"} and result.paths == []
+    else:
+        assert result.status == "error" and result.error_type == "ValidationError"
+        assert result.entities == {} and result.paths == []

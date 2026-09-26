@@ -10,9 +10,10 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -148,6 +149,10 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> Probe:
         return result
 
     monkeypatch.setattr(sdk_base, "httpx", SimpleNamespace(Client=orphan))
+    # Preserve the public buffer constant that the facade reads before constructing the provider.
+    monkeypatch.setattr(
+        provider, "BUFFER_IN_MINUTES", original_provider.BUFFER_IN_MINUTES, raising=False
+    )
     monkeypatch.setattr(boundary, "OAuthTokenProvider", provider)
     return evidence
 
@@ -344,6 +349,16 @@ def sdk_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
         "time",
         SimpleNamespace(sleep=clock.sleep, time=time.time),
     )
+    monkeypatch.setattr(
+        importlib.import_module("sayari.core.oauth_token_provider"),
+        "dt",
+        SimpleNamespace(
+            datetime=SimpleNamespace(
+                now=lambda: datetime(2026, 1, 1) + timedelta(seconds=clock.now)
+            ),
+            timedelta=timedelta,
+        ),
+    )
     return clock
 
 
@@ -399,15 +414,16 @@ def test_auth_requests_are_neither_charged_to_nor_gated_by_the_data_budget(
         data_requests.append(request.url.path)
         return httpx.Response(200, json=profile(request.url.path.rsplit("/", 1)[-1]))
 
-    # An expiry below the SDK provider's two-minute buffer forces a fresh token per call.
+    # Advance past a valid token expiry so the SDK renews it after the data budget is exhausted.
     with SayariClient(
         settings,
         cache,
-        transport=httpx.MockTransport(responding(handler, expires_in=1)),
+        transport=httpx.MockTransport(responding(handler)),
         pacer=sdk_clock.pacer(),
     ) as client:
         assert client.get_entity("root").entity_id == "root"
         assert client.audit.auth_http_attempts == 1 and client.calls_made == 1
+        sdk_clock.now += 3600
         with pytest.raises(BudgetExceeded):
             client.get_entity("second")
         # The token request ran and was counted; only the data attempt behind it was refused.
@@ -595,7 +611,7 @@ def test_tier_pacing_and_coverage_are_independent_of_tier_policy(
 
 
 def test_sdk_types_are_confined_to_adapter_in_production() -> None:
-    # In production code, only the adapter module imports the SDK.
+    # In production code, only the SDK facade imports the SDK.
     root = Path(__file__).resolve().parents[2] / "src/sayari_poc"
     imported: dict[str, list[str]] = {}
     for path in sorted(root.glob("*.py")):
@@ -607,8 +623,6 @@ def test_sdk_types_are_confined_to_adapter_in_production() -> None:
                 modules.append(node.module)
         imported[path.name] = [m for m in modules if m == "sayari" or m.startswith("sayari.")]
     assert imported["sayari_sdk.py"]
-    for name in ("transport.py", "resolve.py", "enrich.py", "upstream.py"):
-        assert imported[name] == []
     assert all(not imports for name, imports in imported.items() if name != "sayari_sdk.py")
 
 
@@ -616,20 +630,22 @@ def test_token_rotation_uses_sdk_provider_and_same_audit_transport(
     settings: Settings,
     cache: ResponseCache,
     probe: Probe,
+    sdk_clock: Clock,
 ) -> None:
     # When the SDK rotates its token, the new token request still uses the audited transport.
     with SayariClient(
         settings,
         cache,
-        pacer=Clock().pacer(),
+        pacer=sdk_clock.pacer(),
         transport=httpx.MockTransport(
             responding(
                 lambda req: httpx.Response(200, json=profile(req.url.path.rsplit("/", 1)[1])),
-                expires_in=0,
+                expires_in=3600,
             )
         ),
     ) as client:
         client.get_entity("first")
+        sdk_clock.now += 3600
         client.get_entity("second")
         assert client.audit.auth_http_attempts == client.calls_made == 2
         assert probe.orphan_count == 2 and probe.orphan_requests == 0
@@ -981,12 +997,16 @@ def test_unsafe_api_origin_is_refused_before_any_request(
         b'{"access_token": ""}',
         b'{"access_token": "   "}',
         b'{"access_token": 7}',
+        b'{"access_token": "synthetic-token"}',
+        b'{"access_token": "synthetic-token", "expires_in": "invalid", "token_type": "Bearer"}',
+        b'{"access_token": "synthetic-token", "expires_in": 3600}',
+        b'{"access_token": "synthetic-token", "expires_in": 3600, "token_type": null}',
     ],
 )
 def test_malformed_auth_response_stops_before_any_data_request(
     settings: Settings, cache: ResponseCache, probe: Probe, body: bytes
 ) -> None:
-    # A malformed auth response leads to no data request and nothing in the cache.
+    # A malformed token is attempted once across later calls, with no data requests or caching.
     data_paths: list[str] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -1000,7 +1020,150 @@ def test_malformed_auth_response_stops_before_any_data_request(
     ) as client:
         with pytest.raises(SayariAuthError, match="Malformed Sayari authentication response"):
             client.get_entity("root")
+        for entity_id in ("later", "last"):
+            with pytest.raises(SayariAuthError):
+                client.get_entity(entity_id)
         assert data_paths == []
         assert client.audit.data_http_attempts == 0
-        assert client.audit.auth_http_attempts >= 1
+        assert client.audit.auth_http_attempts == 1
+        assert client.audit.pacing_waits == 0
     assert not list(settings.cache_dir.glob("*.json"))
+
+
+@pytest.mark.parametrize("status", [302, 400, 401, 403, 429, 500])
+def test_unsuccessful_token_response_latches_before_later_attempts(
+    settings: Settings, cache: ResponseCache, probe: Probe, status: int
+) -> None:
+    # Every non-success token response stops later sign-ins before transport, pacing or counters.
+    paths: list[str] = []
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(status, content=b"synthetic-private-auth-detail")
+
+    with SayariClient(
+        settings, cache, refresh=True, transport=httpx.MockTransport(reject), pacer=Clock().pacer()
+    ) as client:
+        for entity_id in ("first", "second", "third"):
+            with pytest.raises(SayariAuthError) as caught:
+                client.get_entity(entity_id)
+            assert "synthetic-private-auth-detail" not in str(caught.value)
+        assert paths == ["/oauth/token"]
+        assert client.audit.auth_http_attempts == 1
+        assert client.audit.data_http_attempts == client.audit.pacing_waits == 0
+    assert not list(settings.cache_dir.glob("*.json"))
+
+
+def test_missing_token_credentials_never_send_or_pace(
+    settings: Settings, cache: ResponseCache, probe: Probe
+) -> None:
+    # Cache misses without credentials fail safely on every call without a sign-in attempt.
+    configured = settings.model_copy(
+        update={"sayari_client_id": None, "sayari_client_secret": None}
+    )
+    paths: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        raise AssertionError("Missing credentials must not reach the send boundary")
+
+    with SayariClient(
+        configured, cache, transport=httpx.MockTransport(unexpected), pacer=Clock().pacer()
+    ) as client:
+        for entity_id in ("first", "second", "third"):
+            with pytest.raises(SayariAuthError):
+                client.get_entity(entity_id)
+        assert paths == []
+        assert client.audit.auth_http_attempts == client.audit.data_http_attempts == 0
+        assert client.audit.pacing_waits == 0
+
+
+@pytest.mark.parametrize("expires_in", [10**100, 0, -1, 120])
+def test_unusable_token_expiry_latches_before_data_requests(
+    settings: Settings, cache: ResponseCache, probe: Probe, expires_in: int
+) -> None:
+    # Unrepresentable or already-buffered expiry fails once without data requests or cached bytes.
+    with SayariClient(
+        settings,
+        cache,
+        transport=httpx.MockTransport(
+            responding(lambda req: httpx.Response(200, json=profile()), expires_in=expires_in)
+        ),
+        pacer=Clock().pacer(),
+    ) as client:
+        with pytest.raises(SayariAuthError, match="^Malformed Sayari authentication response$"):
+            client.get_entity("first")
+        for entity_id in ("second", "third"):
+            with pytest.raises(SayariAuthError):
+                client.get_entity(entity_id)
+        assert client.audit.auth_http_attempts == 1
+        assert client.audit.data_http_attempts == client.audit.pacing_waits == 0
+    assert not list(settings.cache_dir.glob("*"))
+
+
+def test_documented_token_expiry_reuses_one_token_for_three_calls(
+    settings: Settings, cache: ResponseCache, probe: Probe
+) -> None:
+    # The documented one-day token stays valid across distinct uncached SDK data calls.
+    with SayariClient(
+        settings,
+        cache,
+        transport=httpx.MockTransport(
+            responding(
+                lambda req: httpx.Response(200, json=profile(req.url.path.rsplit("/", 1)[1])),
+                expires_in=86400,
+            )
+        ),
+        pacer=Clock().pacer(),
+    ) as client:
+        for entity_id in ("first", "second", "third"):
+            assert client.get_entity(entity_id).entity_id == entity_id
+        assert client.audit.auth_http_attempts == 1
+        assert client.audit.data_http_attempts == 3
+
+
+@pytest.mark.parametrize(
+    ("partial", "has_upstream", "expected"),
+    [(False, False, "no_data"), (True, False, "partial"), (False, True, "assessed")],
+)
+def test_root_entity_does_not_establish_upstream_coverage(
+    settings: Settings,
+    cache: ResponseCache,
+    probe: Probe,
+    partial: bool,
+    has_upstream: bool,
+    expected: str,
+) -> None:
+    # Retain the queried root while deriving coverage from other entities and the partial flag.
+    payload = upstream_payload()
+    entities = payload["data"]["entities"]
+    root = {**entities["node"], "id": "root"}
+    payload["data"]["entities"] = {"root": root, **(entities if has_upstream else {})}
+    payload["data"]["paths"] = []
+    payload["partial_results"] = partial
+    seed(cache, "/v1/supply_chain/upstream/root?max_depth=3&limit=500", payload)
+    with SayariClient(settings, cache, offline=True) as client:
+        result = client.upstream("root")
+    assert result.status == expected and result.error_type is None
+    assert set(result.entities) == ({"root", "node"} if has_upstream else {"root"})
+    assert result.entities["root"].label == root["label"]
+    assert result.entities["root"].countries == root["countries"]
+    assert result.paths == [] and result.partial_results is partial
+
+
+@pytest.mark.parametrize("minimum", [0, -1, True, 1.5, "120", None])
+def test_transport_rejects_invalid_minimum_token_lifetime(
+    settings: Settings, cache: ResponseCache, minimum: object
+) -> None:
+    # Reject nonpositive and noninteger lifetime configuration, including bool's int subclass.
+    with pytest.raises(ValueError, match="^Minimum token lifetime must be a positive integer$"):
+        audited.AuditedTransport(settings, cache, min_token_lifetime_seconds=cast(int, minimum))
+
+
+def test_facade_passes_sdk_expiry_buffer_to_transport(
+    settings: Settings, cache: ResponseCache, probe: Probe
+) -> None:
+    # Transport validation uses the SDK's public buffer without importing SDK types itself.
+    provider = importlib.import_module("sayari.core.oauth_token_provider").OAuthTokenProvider
+    with SayariClient(settings, cache, offline=True) as client:
+        assert client._transport.min_token_lifetime_seconds == provider.BUFFER_IN_MINUTES * 60

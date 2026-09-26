@@ -10,8 +10,86 @@ from typing import Any, cast
 import pytest
 
 from sayari_poc import presentation
-from sayari_poc.models import Findings, OntologyFactor
+from sayari_poc.config import Settings
+from sayari_poc.findings import assemble_findings
+from sayari_poc.models import (
+    Findings,
+    IngestResult,
+    InputEntity,
+    OntologyFactor,
+    ResolvedEntity,
+    UpstreamResult,
+)
 from sayari_poc.presentation import ReportView, build_report_view, headline_portfolio
+from tests.ontology_support import synthetic_ontology
+
+
+def test_exception_note_keys_match_real_assembled_failure_reasons(settings: Settings) -> None:
+    # Derive every mapped reason from Findings assembly so producer/display wording cannot drift.
+    inputs = [
+        InputEntity(name=f"Input {i}", address=None, country=None, sheet="list_3", row_number=i + 2)
+        for i in range(4)
+    ]
+    resolved = [
+        ResolvedEntity(
+            sheet=row.sheet,
+            row_number=row.row_number,
+            input_name=row.name,
+            status=status,
+            entity_id="upstream-failed" if status == "resolved" else None,
+        )
+        for row, status in zip(inputs, ("no_match", "weak", "error", "resolved"), strict=True)
+    ]
+    findings = assemble_findings(
+        generated_at="2026-09-26T00:00:00+00:00",
+        ingested={"list_3": IngestResult(entities=inputs, exceptions=[])},
+        inputs=inputs,
+        resolved=resolved,
+        profiles={},
+        upstream={
+            "upstream-failed": UpstreamResult(
+                supplier_id="upstream-failed",
+                entities={},
+                partial_results=False,
+                explored_count=None,
+                status="error",
+                error_type="SayariError",
+            )
+        },
+        psa_records=[],
+        ranked=[],
+        convergence={},
+        coverage={},
+        headline_portfolio="list_3",
+        limit=None,
+        settings=settings,
+        ontology=synthetic_ontology(),
+    )
+    assert len(findings.exceptions) == 4
+    assert {exception["reason"] for exception in findings.exceptions} == set(
+        presentation.EXCEPTION_NOTES
+    )
+    for exception in findings.exceptions:
+        assert (
+            presentation.exception_note(exception)
+            == presentation.EXCEPTION_NOTES[exception["reason"]]
+        )
+
+
+def test_profile_exception_note_explains_unknown_risk() -> None:
+    # Profile failures explain unavailable risk evidence rather than treating it as absent.
+    assert (
+        presentation.exception_note(
+            {"stage": "profile", "reason": "Entity profile retrieval failed"}
+        )
+        == presentation.PROFILE_EXCEPTION_NOTE
+    )
+
+
+def test_unmapped_exception_note_preserves_ingestion_reason() -> None:
+    # Specific ingestion diagnostics survive unchanged instead of receiving an invented explanation.
+    reason = "invalid country: expected an ISO 3166-1 alpha-3 code"
+    assert presentation.exception_note({"stage": "ingestion", "reason": reason}) == reason
 
 
 def test_build_is_deterministic_preserves_findings_and_has_exact_context(

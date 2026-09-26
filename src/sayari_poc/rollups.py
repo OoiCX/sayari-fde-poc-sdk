@@ -57,8 +57,8 @@ def supplier_breakdown(
         retrieval = upstream.get(entity_id) if entity_id else None
         # A failed or unattempted search gives no measured upstream count.
         retrieved = retrieval is not None and retrieval.status != "error"
-        # Take severity from the ontology, never the profile's own level, so a row can't look severe
-        # here while the selection rule leaves it out.
+        # Count this supplier's own profile factors using published ontology levels. These worklist
+        # columns do not select shared entities; that rule uses upstream factors only.
         levels: Counter[str] = Counter(
             ontology.factors[observed.factor].level
             for observed in (profile.risk_factors if profile else ())

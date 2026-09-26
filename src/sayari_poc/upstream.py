@@ -33,7 +33,8 @@ def fetch_upstream(
             partial_results=result.partial_results, explored_count=result.explored_count
         )
         if result.supplier_id != supplier_id or (
-            result.status == "no_data" and (result.entities or result.paths)
+            result.status == "no_data"
+            and (any(entity_id != supplier_id for entity_id in result.entities) or result.paths)
         ):
             raise SayariValidationError("Inconsistent upstream result", call_state=state)
         # Collect normalised entities here first, so a half-validated supplier is never shared.

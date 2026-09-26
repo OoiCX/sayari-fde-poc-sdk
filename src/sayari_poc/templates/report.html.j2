@@ -313,7 +313,8 @@ Lines indicate upstream connections identified within the scope of this analysis
 <h3>Shared upstream connections</h3>
 {% if row.exposure_state == 'exposed' %}
 <p class="connection-summary">Within the search limits, retrieved evidence links this supplier to {{ row.exposure_count }} of the {{ row.exposure_denominator }} shared upstream entities flagged for review.
-{% if row.path_nodes_without_evidence == 0 %}Path evidence is available for {% if row.exposure_count == 1 %}this connection{% else %}all {{ row.path_nodes_with_evidence }} connections{% endif %}.
+{% if row.path_nodes_not_kept > 0 %}Path examples are kept only for the screened supplier list, so none are shown for {% if row.path_nodes_not_kept == 1 %}this connection{% else %}these connections{% endif %}.
+{% elif row.path_nodes_without_evidence == 0 %}Path evidence is available for {% if row.exposure_count == 1 %}this connection{% else %}all {{ row.path_nodes_with_evidence }} connections{% endif %}.
 {% elif row.path_nodes_with_evidence == 0 %}No path evidence was retrieved for {% if row.exposure_count == 1 %}this connection{% else %}these {{ row.path_nodes_without_evidence }} connections{% endif %}.
 {% else %}Path evidence is available for {{ row.path_nodes_with_evidence }} {{ 'connection' if row.path_nodes_with_evidence == 1 else 'connections' }}; {{ row.path_nodes_without_evidence }} {{ 'has' if row.path_nodes_without_evidence == 1 else 'have' }} no retrieved path evidence.
 {% endif %}</p>

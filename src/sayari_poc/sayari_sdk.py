@@ -80,8 +80,16 @@ class SayariClient:
         ):
             raise ValueError("SAYARI_API_BASE must be an HTTPS origin without credentials")
         self._settings = settings
+        # The SDK subtracts its expiry buffer, so a token at or below it is already unusable.
+        # Verified in sayari/core/oauth_token_provider.py:10 and :33.
         self._transport = AuditedTransport(
-            settings, cache, offline=offline, refresh=refresh, transport=transport, pacer=pacer
+            settings,
+            cache,
+            min_token_lifetime_seconds=OAuthTokenProvider.BUFFER_IN_MINUTES * 60,
+            offline=offline,
+            refresh=refresh,
+            transport=transport,
+            pacer=pacer,
         )
         self._http = httpx.Client(
             transport=self._transport,
@@ -94,10 +102,10 @@ class SayariClient:
         # requests, and cache hits don't spend any auth calls.
         self._replay_sdk = self._make_sdk()
         self._live_sdk: BaseClient | None = None
-        # Hand the configured retry count and timeout to the SDK as request options. Verified in
-        # sayari/core/request_options.py: RequestOptions; sayari/core/http_client.py:
-        # HttpClient.request. RequestOptions types the timeout as int, but HttpClient.request
-        # passes it straight to httpx, which takes a float, so a fractional timeout works.
+        # The SDK retry counter starts at 2, so SDK_MAX_RETRIES=5 allows three retries. Verified in
+        # sayari/core/http_client.py: HttpClient.request (lines 186 and 240). RequestOptions types
+        # the timeout as int, but HttpClient.request passes it straight to httpx, which accepts a
+        # float, so a fractional timeout works.
         self._options = RequestOptions(
             max_retries=settings.sdk_max_retries,
             timeout_in_seconds=settings.sdk_timeout_seconds,  # pyright: ignore[reportArgumentType]
@@ -224,8 +232,9 @@ class SayariClient:
     @staticmethod
     def _validate_id(entity_id: str) -> None:
         """Reject path delimiters before the SDK interpolates an entity ID."""
-        # Verified in sayari/entity/client.py: EntityClient.get_entity interpolates
-        # jsonable_encoder(id) into the path without escaping, so path delimiters must be rejected.
+        # EntityClient.entity_summary and SupplyChainClient.upstream_trade_traversal interpolate
+        # jsonable_encoder(id) without escaping, so reject path delimiters. Verified in
+        # sayari/entity/client.py:433 and sayari/supply_chain/client.py:145.
         if re.fullmatch(r"[A-Za-z0-9_-]+", entity_id) is None:
             raise SayariValidationError("Invalid Sayari entity ID")
 
@@ -408,9 +417,13 @@ class SayariClient:
                 )
             # Set entities and paths together, and only once everything above has validated.
             result.entities, result.paths = entities, paths
-            # Partial coverage wins; then tell bounded non-empty evidence from an empty success.
+            # Partial coverage wins; the queried root alone is not upstream evidence.
             result.status = (
-                "partial" if response.partial_results else ("assessed" if entities else "no_data")
+                "partial"
+                if response.partial_results
+                else "assessed"
+                if any(entity_id != supplier_id for entity_id in entities)
+                else "no_data"
             )
         except ValidationError:
             result.error_type = "ValidationError"

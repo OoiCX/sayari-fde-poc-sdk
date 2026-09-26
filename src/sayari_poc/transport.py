@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from urllib.parse import unquote, unquote_plus
 
 import httpx
@@ -186,6 +187,7 @@ class AuditedTransport(httpx.BaseTransport):
         settings: Settings,
         cache: ResponseCache,
         *,
+        min_token_lifetime_seconds: int,
         offline: bool = False,
         refresh: bool = False,
         transport: httpx.BaseTransport | None = None,
@@ -194,10 +196,14 @@ class AuditedTransport(httpx.BaseTransport):
         """Configure replay-first auditing with lazy socket access.
 
         Injected transports and pacers support network-free verification. Each instance owns its
-        counters and call state; offline and refresh cannot both be enabled.
+        counters and call state; offline and refresh cannot both be enabled. The minimum token
+        lifetime must be a positive integer; invalid configuration raises ValueError.
         """
         if offline and refresh:
             raise ValueError("Refresh is incompatible with offline mode")
+        if type(min_token_lifetime_seconds) is not int or min_token_lifetime_seconds <= 0:
+            raise ValueError("Minimum token lifetime must be a positive integer")
+        self.min_token_lifetime_seconds = min_token_lifetime_seconds
         self.settings = settings
         self.cache = cache
         self.offline = offline
@@ -212,6 +218,7 @@ class AuditedTransport(httpx.BaseTransport):
         # Start in replay mode so nothing can reach the network until live_attempts() is entered.
         self._replaying = True
         self._active = False
+        self._auth_failed = False
         self._key: str | None = None
         self._data_path = ""
         self._record_state: Callable[[CallState], None] = lambda state: None
@@ -416,6 +423,8 @@ class AuditedTransport(httpx.BaseTransport):
         self._reject_credentials(str(request.url))
         # Token requests bypass both the response cache and the data-attempt budget.
         if auth:
+            if self._auth_failed:
+                raise SayariAuthError("Sayari authentication already failed in this run")
             if self._replaying or self.offline:
                 # Hand back a fixed replay-only token; nothing is sent and nothing is cached.
                 return httpx.Response(
@@ -427,17 +436,39 @@ class AuditedTransport(httpx.BaseTransport):
                     },
                 )
             if not all(value.strip() for value in self._secrets[:2]) or len(self._secrets) < 2:
+                self._auth_failed = True
                 raise SayariAuthError("Missing Sayari credentials")
             response = self._send(request, auth=True)
-            if response.is_success:
-                try:
-                    token = response.json().get("access_token")
-                except (ValueError, AttributeError):
-                    token = None
-                if not isinstance(token, str) or not token.strip():
-                    raise SayariAuthError("Malformed Sayari authentication response")
-                # Remember this token so we can catch it if it ever appears in data we log or cache.
-                self._secrets.append(token)
+            # A failed sign-in applies to the run, not just this supplier. Later calls must not
+            # resend the same credentials or spend another pacing slot on a known failure.
+            self._auth_failed = True
+            if not response.is_success:
+                raise SayariAuthError("Sayari authentication rejected")
+            try:
+                payload = response.json()
+                token = payload.get("access_token")
+                expires_in = payload.get("expires_in")
+                token_type = payload.get("token_type")
+            except (ValueError, AttributeError):
+                raise SayariAuthError("Malformed Sayari authentication response") from None
+            # Check usable token fields before the SDK parses AuthResponse and computes expiry.
+            # Token acquisition and rotation still belong to its OAuthTokenProvider.
+            if (
+                not isinstance(token, str)
+                or not token.strip()
+                or type(expires_in) is not int
+                or expires_in <= self.min_token_lifetime_seconds
+                or not isinstance(token_type, str)
+                or not token_type.strip()
+            ):
+                raise SayariAuthError("Malformed Sayari authentication response")
+            try:
+                datetime.now() + timedelta(seconds=expires_in)
+            except (OverflowError, ValueError):
+                raise SayariAuthError("Malformed Sayari authentication response") from None
+            self._auth_failed = False
+            # Remember this token so we can catch it if it ever appears in data we log or cache.
+            self._secrets.append(token)
             return response
 
         # Check the data request body for credentials before touching the cache or the network.
